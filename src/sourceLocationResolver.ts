@@ -1,4 +1,4 @@
-import { SourceLocation, ReactFiberNode } from './types'
+import { SourceLocation, ReactFiberNode, SerializableValue, SerializableProps } from './types'
 import ErrorStackParser from 'error-stack-parser'
 import StackTraceGPS from 'stacktrace-gps'
 
@@ -38,6 +38,123 @@ async function extractFilePathFromStack(debugStack: Error | { fileName: string; 
 }
 
 const FORWARD_REF_TAG = 11
+
+/**
+ * Checks if a value is a primitive type (string, number, boolean, null)
+ */
+function isPrimitive(value: unknown): value is string | number | boolean | null {
+  if (value === null) return true
+  const type = typeof value
+  return type === 'string' || type === 'number' || type === 'boolean'
+}
+
+/**
+ * Checks if an object is a plain object (not a class instance, Date, RegExp, React element, etc.)
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null) return false
+  
+  // Exclude React elements (they have $$typeof symbol property)
+  if ('$$typeof' in value) return false
+  
+  return true
+}
+
+/**
+ * Attempts to convert a value to a serializable format.
+ * Returns the serializable value or undefined if the value cannot be serialized.
+ * @param value - The value to convert
+ * @param seen - Set of seen objects to detect circular references
+ * @returns The serializable value or undefined
+ */
+function toSerializableValue(value: unknown, seen: WeakSet<object> = new WeakSet()): SerializableValue | undefined {
+  // Handle primitives
+  if (isPrimitive(value)) {
+    return value
+  }
+
+  // Handle arrays
+  if (Array.isArray(value)) {
+    // Check for circular references
+    if (seen.has(value)) return undefined
+    seen.add(value)
+
+    const result: SerializableValue[] = []
+    for (const item of value) {
+      const serialized = toSerializableValue(item, seen)
+      if (serialized === undefined) {
+        // Skip non-serializable items in arrays
+        continue
+      }
+      result.push(serialized)
+    }
+    return result.length > 0 ? result : undefined
+  }
+
+  // Handle plain objects
+  if (isPlainObject(value)) {
+    // Check for circular references
+    if (seen.has(value)) return undefined
+    seen.add(value)
+
+    const result: Record<string, SerializableValue> = {}
+    let hasProps = false
+
+    for (const [key, val] of Object.entries(value)) {
+      const serialized = toSerializableValue(val, seen)
+      if (serialized !== undefined) {
+        result[key] = serialized
+        hasProps = true
+      }
+    }
+    return hasProps ? result : undefined
+  }
+
+  // Non-serializable value (function, symbol, Date, RegExp, class instance, etc.)
+  return undefined
+}
+
+/**
+ * Filters an object to only include serializable values (primitives, arrays, simple objects)
+ * Non-serializable values (functions, symbols, class instances, etc.) are excluded
+ * @param props - The props object to filter
+ * @returns A new object containing only serializable values
+ */
+export function filterPrimitiveProps(
+  props: Record<string, unknown> | undefined | null
+): SerializableProps | undefined {
+  if (!props || typeof props !== 'object' || Array.isArray(props)) {
+    return undefined
+  }
+
+  const result: SerializableProps = {}
+  let hasProps = false
+
+  for (const [key, value] of Object.entries(props)) {
+    const serialized = toSerializableValue(value)
+    if (serialized !== undefined) {
+      result[key] = serialized
+      hasProps = true
+    }
+  }
+
+  return hasProps ? result : undefined
+}
+
+/**
+ * Extracts component props from a React Fiber node, filtering to only serializable values
+ * @param fiberNode - The React Fiber node
+ * @returns Filtered props object or undefined if no serializable props found
+ */
+export function extractComponentProps(
+  fiberNode: ReactFiberNode
+): SerializableProps | undefined {
+  // React stores props in memoizedProps or pendingProps
+  const props = fiberNode.memoizedProps || fiberNode.pendingProps
+  return filterPrimitiveProps(props)
+}
 
 /**
  * Skips ForwardRef nodes (tag 11) by following _debugOwner
@@ -127,6 +244,7 @@ export async function parseDebugStack(
   }
 
   let componentName: string | undefined = getComponentName(nodeToCheck) || undefined
+  const componentProps = extractComponentProps(nodeToCheck)
 
   let sourceLocation: SourceLocation
 
@@ -148,7 +266,8 @@ export async function parseDebugStack(
           file: cleanedFileName,
           line: originalFrame.lineNumber || targetFrame.lineNumber || 0,
           column: originalFrame.columnNumber || targetFrame.columnNumber || 0,
-          componentName
+          componentName,
+          componentProps
         }
       } else {
         return null
@@ -166,7 +285,8 @@ export async function parseDebugStack(
             file: cleanedFileName,
             line: targetFrame.lineNumber || 0,
             column: targetFrame.columnNumber || 0,
-            componentName
+            componentName,
+            componentProps
           }
         } else {
           return null
@@ -184,7 +304,8 @@ export async function parseDebugStack(
       file: cleanedFileName,
       line: debugStack.lineNumber || 0,
       column: debugStack.columnNumber || 0,
-      componentName
+      componentName,
+      componentProps
     }
   } else {
     return null

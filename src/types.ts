@@ -18,7 +18,21 @@ export interface SourceLocation {
   sourceCode?: string
   /** The immediate parent DOM element's source location */
   parent?: SourceLocation
+  /** Component props (only serializable values: primitives, arrays, and simple objects) */
+  componentProps?: SerializableProps
 }
+
+/** Primitive types that can be serialized to JSON */
+export type SerializablePrimitive = string | number | boolean | null
+
+/** Recursive type for serializable values (primitives, arrays, and simple key/value objects) */
+export type SerializableValue = 
+  | SerializablePrimitive 
+  | SerializableValue[] 
+  | { [key: string]: SerializableValue }
+
+/** Props object containing only serializable values */
+export type SerializableProps = Record<string, SerializableValue>
 
 /**
  * Represents a React Fiber node with debug stack information
@@ -51,6 +65,10 @@ export interface ReactFiberNode {
   child?: ReactFiberNode
   /** Sibling fiber node */
   sibling?: ReactFiberNode
+  /** Memoized props (React internal) */
+  memoizedProps?: Record<string, unknown>
+  /** Pending props (React internal) */
+  pendingProps?: Record<string, unknown>
 }
 
 /**

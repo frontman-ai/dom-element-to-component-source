@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0]
+
+### Added
+- `componentProps` property to `SourceLocation` interface - contains serializable component props
+- Props are filtered to include only JSON-serializable values (primitives, arrays, plain objects)
+- Non-serializable values (functions, React elements, class instances, symbols, etc.) are automatically excluded
+- Handles circular references safely
+- New exported functions: `filterPrimitiveProps`, `extractComponentProps`
+- New types: `SerializableValue`, `SerializablePrimitive`, `SerializableProps`
+- Comprehensive test suite for props filtering (53 tests)
+
 ## [0.3.2]
 
 ### Changed
