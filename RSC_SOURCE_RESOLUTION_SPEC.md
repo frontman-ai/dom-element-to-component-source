@@ -83,6 +83,7 @@ type SourceResolutionResult =
 - Parse React virtual source URLs without browser requests.
 - Build bounded, ordered React invocation ancestry.
 - Resolve adjacent and alternate source maps.
+- Restrict generated files and source maps to `projectRoot` before reading.
 - Resolve Turbopack and webpack project source prefixes against `projectRoot`.
 - Resolve the definition and every invocation in one server operation.
 - Expose explicit, structured failures.
@@ -92,15 +93,15 @@ type SourceResolutionResult =
 ## Frontman Responsibilities
 
 - Validate HTTP request and response schemas.
-- Authorize generated files against `projectRoot`.
 - Authorize resolved files against `sourceRoot`.
 - Convert absolute paths to project-relative paths.
 - Persist source locations and resolution failures.
 - Render source context and failures in agent prompts.
 - Treat all DOM and source metadata as untrusted input.
 
-Frontman must retain boundary validation even when the package validates or
-normalizes paths internally.
+Frontman supplies the trusted `projectRoot`; this package owns all filesystem
+reads beneath it. Frontman independently validates returned paths against its
+narrower `sourceRoot` before persistence.
 
 ## Commands
 

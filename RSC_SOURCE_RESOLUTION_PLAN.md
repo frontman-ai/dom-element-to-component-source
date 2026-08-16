@@ -5,7 +5,8 @@
 - Replace the package API; upstream compatibility is not required.
 - Return `definition` and ordered `invocations` separately.
 - Resolve a complete context in one trusted server call.
-- Keep Frontman filesystem authorization independent from package mechanics.
+- Keep input filesystem authorization with package mechanics; Frontman validates
+  every returned path against its narrower source root.
 - Build browser and server entries separately so Turbopack does not trace Node
   source-map internals into browser code.
 - Make the repository installable through an exact Git commit with `prepack`.
@@ -96,7 +97,6 @@ focused client tests.
 **Acceptance criteria:**
 
 - Endpoint delegates source-map mechanics to package server API.
-- Frontman independently validates every generated path against `projectRoot`.
 - Frontman validates every resolved path against `sourceRoot`.
 - Response contains relative definition and invocation paths.
 
