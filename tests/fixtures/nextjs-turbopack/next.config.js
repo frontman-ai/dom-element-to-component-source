@@ -1,9 +1,10 @@
 const path = require("path")
+const packageRoot = path.resolve(__dirname, '../../..')
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   turbopack: {
-    root: __dirname.split(path.sep).slice(0, -3).join(path.sep),
+    root: packageRoot,
     rules: {
       '*.svg': {
         loaders: ['@svgr/webpack'],

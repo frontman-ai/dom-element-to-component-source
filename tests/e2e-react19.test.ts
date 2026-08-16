@@ -22,7 +22,23 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`Server at ${url} did not become ready within ${timeoutMs}ms`)
 }
 
-describe('E2E React 19 - getElementSourceLocation Test', () => {
+async function stopProcess(process: ChildProcess): Promise<void> {
+  if (!process.pid) return
+
+  try {
+    globalThis.process.kill(-process.pid, 'SIGTERM')
+  } catch {
+    return
+  }
+  await setTimeout(500)
+  try {
+    globalThis.process.kill(-process.pid, 'SIGKILL')
+  } catch {
+    // Process group already exited.
+  }
+}
+
+describe('E2E React 19 - getElementSourceContext Test', () => {
   let devServer: ChildProcess | null = null
   const SERVER_PORT = 3001
   const SERVER_URL = `http://localhost:${SERVER_PORT}`
@@ -35,7 +51,6 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
     const installProcess = spawn('yarn', ['install'], {
       cwd: REACT19_FIXTURE_PATH,
       stdio: 'pipe',
-      shell: true
     })
     
     await new Promise<void>((resolve, reject) => {
@@ -58,7 +73,7 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
     devServer = spawn('yarn', ['dev'], {
       cwd: REACT19_FIXTURE_PATH,
       stdio: 'pipe',
-      shell: true
+      detached: true,
     })
 
     devServer.on('error', (error) => {
@@ -81,20 +96,13 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
   afterAll(async () => {
     if (devServer) {
       console.log('🛑 Shutting down React 19 dev server...')
-      devServer.kill('SIGTERM')
-      
-      await setTimeout(2000)
-      
-      if (!devServer.killed) {
-        devServer.kill('SIGKILL')
-      }
-      
+      await stopProcess(devServer)
       devServer = null
       console.log('✅ React 19 dev server stopped')
     }
   })
 
-  it('should extract source location with parent from h2 tag in Card component', async () => {
+  it('extracts explicit source context from an h2 in Card', async () => {
     const browser = await chromium.launch({ headless: true })
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -108,7 +116,7 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
       await page.waitForSelector('[data-testid="card-component"]', { timeout: 10000 })
       
       //@ts-ignore
-      await page.waitForFunction(() => typeof window.getElementSourceLocation === 'function', { timeout: 10000 })
+      await page.waitForFunction(() => typeof window.getElementSourceContext === 'function', { timeout: 10000 })
       
       const h2Element = await page.$('h2.card-title')
       expect(h2Element).toBeTruthy()
@@ -118,7 +126,7 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
         if (!h2) return null
         
         //@ts-ignore
-        return window.getElementSourceLocation(h2)
+        return window.getElementSourceContext(h2)
       })
       
       expect(result).toBeTruthy()
@@ -126,16 +134,17 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
       expect(result.data).toBeDefined()
       
       // Verify basic source location fields
-      expect(result.data.file).toContain('App.tsx')
-      expect(result.data.componentName).toBe('Card')
-      expect(result.data.tagName).toBe('H2')
+      expect(result.data.definition.file).toContain('Card.tsx')
+      expect(result.data.definition.componentName).toBe('Card')
+      expect(result.data.definition.tagName).toBe('H2')
+      expect(result.data.invocations).toBeInstanceOf(Array)
       
     } finally {
       await browser.close()
     }
   })
 
-  it('should extract source location from forwardRef button pointing to Button.tsx', async () => {
+  it('extracts explicit source context from a forwardRef button', async () => {
     const browser = await chromium.launch({ headless: true })
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -148,7 +157,7 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
       await page.waitForSelector('[data-testid="increment-button"]', { timeout: 10000 })
       
       //@ts-ignore
-      await page.waitForFunction(() => typeof window.getElementSourceLocation === 'function', { timeout: 10000 })
+      await page.waitForFunction(() => typeof window.getElementSourceContext === 'function', { timeout: 10000 })
       
       const buttonElement = await page.$('[data-testid="increment-button"]')
       expect(buttonElement).toBeTruthy()
@@ -158,17 +167,17 @@ describe('E2E React 19 - getElementSourceLocation Test', () => {
         if (!button) return null
         
         //@ts-ignore
-        return window.getElementSourceLocation(button)
+        return window.getElementSourceContext(button)
       })
       
       expect(result).toBeTruthy()
       expect(result.success).toBe(true)
       expect(result.data).toBeDefined()
       
-      // The button element source points to App.tsx where the component tree is rendered
-      expect(result.data.file).toContain('App.tsx')
-      expect(result.data.componentName).toBe('App')
-      expect(result.data.tagName).toBe('BUTTON')
+      expect(result.data.definition.file).toContain('Button.tsx')
+      expect(result.data.definition.componentName).toBe('Button')
+      expect(result.data.definition.tagName).toBe('BUTTON')
+      expect(result.data.invocations).toBeInstanceOf(Array)
       
     } finally {
       await browser.close()

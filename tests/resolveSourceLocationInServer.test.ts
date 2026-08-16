@@ -1,52 +1,166 @@
-import { describe, it, expect } from 'vitest'
-import { resolve } from 'node:path'
-import { resolveSourceLocationInServer } from '../src'
+import { describe, expect, it } from 'vitest'
+import { resolve, sep } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { resolveElementSourceContext } from '../src/server'
+import { ElementSourceContext, SourceResolutionErrorCode } from '../src/types'
 
-describe('resolveSourceLocationInServer', () => {
-  it('maps about://React/Server file:// path to original source via source-map', async () => {
-    // Use paths relative to the project root to work on any machine
-    const projectRoot = resolve(__dirname, '..')
-    const fixturePath = resolve(projectRoot, 'tests/fixtures/server-source-map')
-    const serverChunkPath = resolve(
-      fixturePath,
-      '.next/server/chunks/ssr/[root-of-the-server]__925b01b7._.js'
-    )
-    const expectedSourcePath = resolve(
-      fixturePath,
-      'src/app/_components/intro.tsx'
-    )
+const projectRoot = resolve(__dirname, 'fixtures/server-source-map')
+const generatedRoot = resolve(projectRoot, 'generated')
 
-    // Construct the about://React/Server URL with proper encoding
-    // Brackets need to be URL encoded as %5B and %5D
-    const serverUrl = `about://React/Server/file://${serverChunkPath}`.replace(/\[/g, '%5B').replace(/\]/g, '%5D')
-    const serverReported = {
-      file: serverUrl,
-      line: 251,
-      column: 300
+function serverLocation(file: string, line: number = 1, column: number = 0) {
+  return {
+    file: `about://React/Server/${pathToFileURL(resolve(generatedRoot, file)).href}`,
+    line,
+    column,
+  }
+}
+
+function expectErrorCode(
+  result: Awaited<ReturnType<typeof resolveElementSourceContext>>,
+  code: SourceResolutionErrorCode,
+): void {
+  expect(result).toMatchObject({ success: false, error: { code } })
+}
+
+describe('resolveElementSourceContext', () => {
+  it('resolves definition and ordered invocations across encoded, turbopack, webpack, relative, and ordinary paths', async () => {
+    const ordinaryInvocation = {
+      file: 'src/already-browser-resolved.tsx',
+      line: 8,
+      column: 3,
+      componentName: 'BrowserOwner',
+    }
+    const context: ElementSourceContext = {
+      definition: {
+        ...serverLocation('[encoded].js'),
+        componentName: 'Definition',
+        tagName: 'MAIN',
+      },
+      invocations: [
+        { ...serverLocation('webpack.js'), componentName: 'NearestOwner' },
+        { ...serverLocation('relative.js'), componentName: 'FartherOwner' },
+        ordinaryInvocation,
+      ],
     }
 
-    const mapped = await resolveSourceLocationInServer(serverReported as any)
+    const result = await resolveElementSourceContext(context, { projectRoot })
 
-    expect(mapped.file).toBeTruthy()
-    // Should not be the server chunk path
-    expect(mapped.file).not.toContain('.next/server/chunks')
-    // Should point to the original source file (intro.tsx based on the source map)
-    expect(mapped.file).toBe(expectedSourcePath)
-    expect(mapped.line).toBeGreaterThan(0)
-    expect(mapped.column).toBeGreaterThanOrEqual(0)
+    expect(result).toEqual({
+      success: true,
+      data: {
+        definition: {
+          file: resolve(projectRoot, 'src/turbopack.tsx').split(sep).join('/'),
+          line: 11,
+          column: 2,
+          componentName: 'Definition',
+          tagName: 'MAIN',
+        },
+        invocations: [
+          {
+            file: resolve(projectRoot, 'src/webpack.tsx').split(sep).join('/'),
+            line: 12,
+            column: 3,
+            componentName: 'NearestOwner',
+          },
+          {
+            file: resolve(projectRoot, 'src/relative.tsx').split(sep).join('/'),
+            line: 13,
+            column: 4,
+            componentName: 'FartherOwner',
+          },
+          ordinaryInvocation,
+        ],
+      },
+    })
   })
 
-  it('returns original sourceLocation if file does not start with about://React/Server', async () => {
-    const sourceLocation = {
-      file: '/some/regular/path.tsx',
-      line: 10,
-      column: 5
+  it('supports alternate maps and webpack project source variants', async () => {
+    const context: ElementSourceContext = {
+      definition: serverLocation('alternate.js'),
+      invocations: [serverLocation('webpack-project.js')],
     }
 
-    const result = await resolveSourceLocationInServer(sourceLocation)
+    const result = await resolveElementSourceContext(context, { projectRoot })
 
-    expect(result).toEqual(sourceLocation)
+    expect(result).toEqual({
+      success: true,
+      data: {
+        definition: {
+          file: resolve(projectRoot, 'src/alternate.tsx').split(sep).join('/'),
+          line: 14,
+          column: 5,
+        },
+        invocations: [{
+          file: resolve(projectRoot, 'src/webpack-project.tsx').split(sep).join('/'),
+          line: 15,
+          column: 6,
+        }],
+      },
+    })
+  })
+
+  it('converts original file URLs to filesystem paths', async () => {
+    const result = await resolveElementSourceContext({
+      invocations: [serverLocation('file-url.js')],
+    }, { projectRoot })
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        invocations: [{ file: '/src/file-url.tsx', line: 16, column: 7 }],
+      },
+    })
+  })
+
+  it('returns INVALID_REACT_URL for malformed React virtual locations', async () => {
+    const result = await resolveElementSourceContext({
+      invocations: [{
+        file: 'about://React/Server/https://example.com/chunk.js',
+        line: 1,
+        column: 0,
+      }],
+    }, { projectRoot })
+
+    expectErrorCode(result, 'INVALID_REACT_URL')
+  })
+
+  it('returns GENERATED_FILE_NOT_FOUND for missing or out-of-root generated files', async () => {
+    const missing = await resolveElementSourceContext({
+      invocations: [serverLocation('missing.js')],
+    }, { projectRoot })
+    const outside = await resolveElementSourceContext({
+      invocations: [{
+        file: `about://React/Server/${pathToFileURL(__filename).href}`,
+        line: 1,
+        column: 0,
+      }],
+    }, { projectRoot })
+
+    expectErrorCode(missing, 'GENERATED_FILE_NOT_FOUND')
+    expectErrorCode(outside, 'GENERATED_FILE_NOT_FOUND')
+  })
+
+  it('returns SOURCE_MAP_NOT_FOUND instead of an unchanged virtual location', async () => {
+    const result = await resolveElementSourceContext({
+      invocations: [serverLocation('no-map.js')],
+    }, { projectRoot })
+
+    expectErrorCode(result, 'SOURCE_MAP_NOT_FOUND')
+  })
+
+  it('returns POSITION_NOT_FOUND when a map has no original position', async () => {
+    const result = await resolveElementSourceContext({
+      invocations: [serverLocation('no-position.js')],
+    }, { projectRoot })
+
+    expectErrorCode(result, 'POSITION_NOT_FOUND')
+  })
+
+  it('returns RESOLUTION_FAILED for malformed source maps', async () => {
+    const result = await resolveElementSourceContext({
+      invocations: [serverLocation('malformed.js')],
+    }, { projectRoot })
+
+    expectErrorCode(result, 'RESOLUTION_FAILED')
   })
 })
-
-

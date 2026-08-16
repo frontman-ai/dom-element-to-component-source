@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Replaced `getElementSourceLocation` with `getElementSourceContext`, which returns an explicit JSX definition and ordered invocation ancestry.
+- Replaced `resolveSourceLocationInServer` with `resolveElementSourceContext` from the `/server` entry.
+- Added structured server resolution errors and canonical project-root checks for generated files and source maps.
+- Split browser and server bundles and added Git dependency builds through `prepack`.
+
+### Removed
+- Removed recursive `SourceLocation.parent` output and old public API compatibility.
+
 ## [0.5.0]
 
 ### Added
