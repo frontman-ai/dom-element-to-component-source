@@ -47,6 +47,9 @@ export interface ReactFiberNode {
   type?: {
     name?: string
     displayName?: string
+    render?: {
+      name?: string
+    }
   }
   /** Alternative debug source location (older React versions) */
   _debugSource?: {
@@ -120,4 +123,13 @@ export interface ResolveElementSourceContextOptions {
 export interface ElementSourceContextOptions {
   /** Maximum number of Fiber and owner nodes to inspect */
   maxDepth?: number
+}
+
+export interface ElementComponentNameOptions {
+  /** Maximum number of owner and return Fiber nodes to inspect */
+  maxDepth?: number
+  /** Component names to ignore in addition to Fragment and Suspense */
+  excludedNames?: readonly string[]
+  /** Whether names beginning with an underscore are eligible. Defaults to true. */
+  includeUnderscorePrefixed?: boolean
 }

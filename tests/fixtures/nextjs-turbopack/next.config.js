@@ -1,11 +1,8 @@
-const path = require("path")
-const packageRoot = path.resolve(__dirname, '../../..')
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['source-map'],
+  serverExternalPackages: ['dom-element-to-component-source'],
   turbopack: {
-    root: packageRoot,
+    root: __dirname,
     rules: {
       '*.svg': {
         loaders: ['@svgr/webpack'],

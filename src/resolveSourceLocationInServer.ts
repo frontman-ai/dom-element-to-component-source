@@ -211,6 +211,10 @@ async function resolveSourceLocation(
   }
 }
 
+/**
+ * Resolves React virtual locations. Returned source paths are untrusted output;
+ * consumers must authorize them before reading or exposing them.
+ */
 export async function resolveElementSourceContext(
   context: ElementSourceContext,
   options: ResolveElementSourceContextOptions,

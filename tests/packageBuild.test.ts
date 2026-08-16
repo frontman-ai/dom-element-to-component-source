@@ -41,7 +41,11 @@ describe('package build', () => {
     ).href)
     const serverEntry = await import(pathToFileURL(resolve(distRoot, 'server.mjs')).href)
 
-    expect(Object.keys(browserEntry)).toEqual(['getElementSourceContext'])
+    expect(Object.keys(browserEntry)).toEqual([
+      'getElementComponentName',
+      'getElementSourceContext',
+    ])
+    expect(typeof browserEntry.getElementComponentName).toBe('function')
     expect(typeof browserEntry.getElementSourceContext).toBe('function')
     expect(Object.keys(serverEntry)).toEqual(['resolveElementSourceContext'])
     expect(typeof serverEntry.resolveElementSourceContext).toBe('function')

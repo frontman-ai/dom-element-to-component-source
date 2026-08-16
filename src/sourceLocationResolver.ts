@@ -2,8 +2,6 @@ import { SourceLocation, ReactFiberNode, SerializableValue, SerializableProps } 
 import ErrorStackParser from 'error-stack-parser'
 import StackTraceGPS from 'stacktrace-gps'
 
-const FORWARD_REF_TAG = 11
-
 /**
  * Checks if a value is a primitive type (string, number, boolean, null)
  */
@@ -122,32 +120,19 @@ export function extractComponentProps(
 }
 
 /**
- * Skips ForwardRef nodes (tag 11) by following _debugOwner
+ * Gets the component name exposed by a Fiber, including ForwardRef render names.
  */
-function skipForwardRefs(fiber: ReactFiberNode): ReactFiberNode {
-  let current = fiber
-  while ((current as any).tag === FORWARD_REF_TAG && current._debugOwner) {
-    current = current._debugOwner
-  }
-  return current
-}
-
-/**
- * Gets the component name from a fiber node, skipping ForwardRef nodes
- */
-function getComponentName(fiberNode: ReactFiberNode): string | null {
-  const node = skipForwardRefs(fiberNode)
-  
-  const nodeType = (node as any).type
+export function getFiberComponentName(fiberNode: ReactFiberNode): string | undefined {
+  const nodeType = fiberNode.type
   if (nodeType) {
     if (nodeType.displayName) return nodeType.displayName
     if (nodeType.render?.name) return nodeType.render.name
     if (nodeType.name) return nodeType.name
   }
+
+  if (fiberNode.name) return fiberNode.name
   
-  if ((node as any).name) return (node as any).name
-  
-  return null
+  return undefined
 }
 
 /**
@@ -177,7 +162,7 @@ export async function parseDebugStack(
     return null
   }
 
-  let componentName: string | undefined = getComponentName(fiberNode) || undefined
+  const componentName = getFiberComponentName(fiberNode)
   const componentProps = extractComponentProps(fiberNode)
 
   let sourceLocation: SourceLocation

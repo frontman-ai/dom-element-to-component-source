@@ -1,5 +1,6 @@
 import {
   DomElementWithReactInternals,
+  ElementComponentNameOptions,
   ElementSourceContextOptions,
   ElementSourceContextResult,
   ReactFiberNode,
@@ -7,6 +8,7 @@ import {
 } from './types'
 import {
   extractComponentProps,
+  getFiberComponentName,
   parseDebugStack,
   validateSourceLocation,
 } from './sourceLocationResolver'
@@ -34,14 +36,6 @@ function getDebugSource(fiber: ReactFiberNode | undefined): DebugSource | undefi
 
 function getOwner(fiber: ReactFiberNode | undefined): ReactFiberNode | undefined {
   return fiber?.owner || fiber?._debugOwner
-}
-
-function getComponentName(fiber: ReactFiberNode | undefined): string | undefined {
-  if (!fiber) {
-    return undefined
-  }
-
-  return fiber.name || fiber.type?.displayName || fiber.type?.name
 }
 
 function parseReactServerLocation(
@@ -131,20 +125,18 @@ async function getInvocations(
   maxDepth: number,
 ): Promise<SourceLocation[]> {
   const invocations: SourceLocation[] = []
-  let current = firstOwner
 
-  for (let depth = 0; current && depth < maxDepth; depth++) {
+  for (const current of walkFiberChain(firstOwner, getOwner, maxDepth)) {
     const enclosingOwner = getOwner(current)
     const location = await parseLocation(
       current,
       getDebugSource(current),
-      getComponentName(enclosingOwner) || getComponentName(current),
+      (enclosingOwner && getFiberComponentName(enclosingOwner)) || getFiberComponentName(current),
       tagName,
     )
     if (location) {
       invocations.push(location)
     }
-    current = enclosingOwner
   }
 
   return invocations
@@ -172,6 +164,54 @@ function extractFiberNode(element: Element): ReactFiberNode | null {
   return null
 }
 
+function* walkFiberChain(
+  first: ReactFiberNode | undefined,
+  next: (fiber: ReactFiberNode) => ReactFiberNode | undefined,
+  maxDepth: number,
+): Generator<ReactFiberNode> {
+  let current = first
+  for (let depth = 0; current && depth < maxDepth; depth++) {
+    yield current
+    current = next(current)
+  }
+}
+
+export function getElementComponentName(
+  element: Element,
+  options: ElementComponentNameOptions = {},
+): string | undefined {
+  const fiber = extractFiberNode(element)
+  if (!fiber) {
+    return undefined
+  }
+
+  const maxDepth = getMaxDepth(options.maxDepth)
+  const excludedNames = new Set([
+    'Fragment',
+    'Suspense',
+    ...(options.excludedNames || []),
+  ])
+  const isEligible = (name: string | undefined): name is string => !!name &&
+    !excludedNames.has(name) &&
+    (options.includeUnderscorePrefixed !== false || !name.startsWith('_'))
+
+  for (const owner of walkFiberChain(getOwner(fiber), getOwner, maxDepth)) {
+    const name = getFiberComponentName(owner)
+    if (isEligible(name)) {
+      return name
+    }
+  }
+
+  for (const returnFiber of walkFiberChain(fiber.return, node => node.return, maxDepth)) {
+    const name = getFiberComponentName(returnFiber)
+    if (isEligible(name)) {
+      return name
+    }
+  }
+
+  return undefined
+}
+
 export async function getElementSourceContext(
   element: Element,
   options: ElementSourceContextOptions = {},
@@ -188,12 +228,12 @@ export async function getElementSourceContext(
     }
 
     const maxDepth = getMaxDepth(options.maxDepth)
-    let current: ReactFiberNode | undefined = fiber
     let fallbackInvocations: SourceLocation[] = []
 
-    for (let depth = 0; current && depth < maxDepth; depth++) {
+    for (const current of walkFiberChain(fiber, node => node.return, maxDepth)) {
       const owner = current._debugOwner || current.owner
-      const componentName = getComponentName(owner) || getComponentName(current)
+      const componentName = (owner && getFiberComponentName(owner)) ||
+        getFiberComponentName(current)
       const currentDebugSource = getDebugSource(current)
 
       const currentServerDefinition = parseReactServerLocation(
@@ -228,8 +268,6 @@ export async function getElementSourceContext(
           fallbackInvocations = invocations
         }
       }
-
-      current = current.return
     }
 
     return fallbackInvocations.length > 0

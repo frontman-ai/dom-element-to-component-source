@@ -18,6 +18,13 @@ resolving React Server Component locations through source maps.
 yarn add dom-element-to-component-source
 ```
 
+Until an npm release is available, install an exact Git commit. The package's
+`prepack` script builds every declared `dist` export during installation.
+
+```bash
+yarn add dom-element-to-component-source@https://github.com/frontman-ai/dom-element-to-component-source.git#<full-commit-sha>
+```
+
 ## Browser API
 
 ```typescript
@@ -63,6 +70,33 @@ interface ElementSourceContextOptions {
 }
 ```
 
+### Component Name Discovery
+
+Use `getElementComponentName` when only the nearest eligible React component
+name is needed. It checks owner Fibers before return Fibers and inspects at most
+10 nodes in each bounded traversal by default.
+
+```typescript
+import { getElementComponentName } from 'dom-element-to-component-source'
+
+const name = getElementComponentName(element, {
+  excludedNames: ['FrameworkWrapper'],
+  includeUnderscorePrefixed: false,
+})
+```
+
+```typescript
+interface ElementComponentNameOptions {
+  maxDepth?: number
+  excludedNames?: readonly string[]
+  includeUnderscorePrefixed?: boolean
+}
+```
+
+`Fragment` and `Suspense` are always ignored. Caller exclusions are added to
+those structural exclusions. Underscore-prefixed names are included unless
+`includeUnderscorePrefixed` is `false`.
+
 ## Server API
 
 Import server functionality from the dedicated server entry. Never import this
@@ -89,12 +123,19 @@ The resolver preserves ordinary locations and resolves every
 and source maps must resolve inside the canonical `projectRoot` before they are
 read.
 
-Next.js applications must keep `source-map` external so its runtime can load
-the adjacent `mappings.wasm` file:
+Returned source paths are untrusted output. Original source-map entries may
+resolve outside `projectRoot` and do not need to exist. Consumers must authorize
+every returned path before exposing it or reading from it. Consumer policy can
+include an allowed source root, existence checks, canonical symlink containment,
+and conversion to a relative path.
+
+Next.js applications should externalize this package. Its private `source-map`
+dependency remains an implementation detail and can load its adjacent
+`mappings.wasm` file at runtime:
 
 ```javascript
 module.exports = {
-  serverExternalPackages: ['source-map'],
+  serverExternalPackages: ['dom-element-to-component-source'],
 }
 ```
 

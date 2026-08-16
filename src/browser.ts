@@ -1,5 +1,9 @@
-export { getElementSourceContext } from './getElementSourceLocation'
+export {
+  getElementComponentName,
+  getElementSourceContext,
+} from './getElementSourceLocation'
 export type {
+  ElementComponentNameOptions,
   ElementSourceContext,
   ElementSourceContextOptions,
   ElementSourceContextResult,

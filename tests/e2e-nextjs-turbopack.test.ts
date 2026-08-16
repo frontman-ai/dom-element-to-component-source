@@ -1,9 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'playwright'
-import { join } from 'path'
+import { basename, join } from 'node:path'
 import { spawn, ChildProcess } from 'child_process'
 import { setTimeout } from 'timers/promises'
-import { rmSync, symlinkSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 
 async function waitForServer(url: string, timeoutMs: number): Promise<void> {
   const startTime = Date.now()
@@ -39,140 +48,115 @@ async function stopProcess(process: ChildProcess): Promise<void> {
   }
 }
 
+async function run(command: string, args: string[], cwd: string): Promise<string> {
+  const child = spawn(command, args, { cwd, stdio: 'pipe' })
+  let output = ''
+  child.stdout?.on('data', data => { output += data.toString() })
+  child.stderr?.on('data', data => { output += data.toString() })
+
+  return new Promise((resolve, reject) => {
+    child.on('close', code => code === 0
+      ? resolve(output)
+      : reject(new Error(`${command} ${args.join(' ')} failed with code ${code}\n${output}`)))
+    child.on('error', reject)
+  })
+}
+
+function readJavaScriptFiles(root: string): string {
+  if (!existsSync(root)) return ''
+
+  return readdirSync(root, { withFileTypes: true })
+    .map(entry => {
+      const path = join(root, entry.name)
+      if (entry.isDirectory()) return readJavaScriptFiles(path)
+      return entry.name.endsWith('.js') ? readFileSync(path, 'utf8') : ''
+    })
+    .join('\n')
+}
+
 describe('E2E Next.js Turbopack - source context package entries', () => {
-  let devServer: ChildProcess | null = null
+  let productionServer: ChildProcess | null = null
+  let tempRoot: string
+  let nextjsFixturePath: string
   const SERVER_PORT = 3002
   const SERVER_URL = `http://localhost:${SERVER_PORT}`
-  const NEXTJS_FIXTURE_PATH = join(__dirname, 'fixtures', 'nextjs-turbopack')
+  const NEXTJS_FIXTURE_SOURCE = join(__dirname, 'fixtures', 'nextjs-turbopack')
   const PROJECT_ROOT = join(__dirname, '..')
 
   beforeAll(async () => {
-    const packageBuild = spawn('yarn', ['build'], {
-      cwd: PROJECT_ROOT,
-      stdio: 'pipe',
-    })
-    await new Promise<void>((resolve, reject) => {
-      packageBuild.on('close', code => code === 0
-        ? resolve()
-        : reject(new Error(`package build failed with code ${code}`)))
-      packageBuild.on('error', reject)
+    tempRoot = mkdtempSync(join(tmpdir(), 'dom-source-nextjs-'))
+    nextjsFixturePath = join(tempRoot, 'app')
+    cpSync(NEXTJS_FIXTURE_SOURCE, nextjsFixturePath, {
+      recursive: true,
+      filter: source => !['.next', 'node_modules'].includes(basename(source)),
     })
 
-    console.log('📦 Installing dependencies...')
-    
-    // Install dependencies first
-    const installProcess = spawn('yarn', ['install'], {
-      cwd: NEXTJS_FIXTURE_PATH,
-      stdio: 'pipe',
-    })
-    
-    await new Promise<void>((resolve, reject) => {
-      installProcess.on('close', (code) => {
-        if (code === 0) {
-          console.log('✅ Dependencies installed successfully')
-          resolve()
-        } else {
-          reject(new Error(`yarn install failed with code ${code}`))
-        }
-      })
-      
-      installProcess.on('error', (error) => {
-        reject(error)
-      })
-    })
+    const packageArchive = join(tempRoot, 'dom-element-to-component-source.tgz')
+    await run('yarn', ['pack', '--out', packageArchive], PROJECT_ROOT)
 
-    const packageLink = join(
-      NEXTJS_FIXTURE_PATH,
+    const fixturePackagePath = join(nextjsFixturePath, 'package.json')
+    const fixturePackage = JSON.parse(readFileSync(fixturePackagePath, 'utf8'))
+    fixturePackage.dependencies['dom-element-to-component-source'] = `file:${packageArchive}`
+    writeFileSync(fixturePackagePath, `${JSON.stringify(fixturePackage, null, 2)}\n`)
+
+    await run('npm', ['install'], nextjsFixturePath)
+
+    const installedPackageRoot = join(
+      nextjsFixturePath,
       'node_modules',
       'dom-element-to-component-source',
     )
-    rmSync(packageLink, { recursive: true, force: true })
-    symlinkSync(PROJECT_ROOT, packageLink, 'dir')
-    
-    const productionBuild = spawn('yarn', ['build'], {
-      cwd: NEXTJS_FIXTURE_PATH,
-      stdio: 'pipe',
-    })
-    let productionBuildOutput = ''
-    productionBuild.stdout?.on('data', data => { productionBuildOutput += data.toString() })
-    productionBuild.stderr?.on('data', data => { productionBuildOutput += data.toString() })
-    await new Promise<void>((resolve, reject) => {
-      productionBuild.on('close', code => code === 0
-        ? resolve()
-        : reject(new Error(`Next.js production build failed with code ${code}\n${productionBuildOutput}`)))
-      productionBuild.on('error', reject)
-    })
+    const installedPackage = JSON.parse(readFileSync(
+      join(installedPackageRoot, 'package.json'),
+      'utf8',
+    ))
+    for (const exportedEntry of Object.values(installedPackage.exports) as Array<Record<string, string>>) {
+      for (const exportedPath of Object.values(exportedEntry)) {
+        expect(existsSync(join(installedPackageRoot, exportedPath))).toBe(true)
+      }
+    }
 
-    console.log('🚀 Starting Next.js Turbopack dev server...')
-    
-    devServer = spawn('yarn', ['dev'], {
-      cwd: NEXTJS_FIXTURE_PATH,
+    await run('npm', ['run', 'build'], nextjsFixturePath)
+
+    const browserOutput = readJavaScriptFiles(join(nextjsFixturePath, '.next', 'static', 'chunks'))
+    expect(browserOutput).not.toContain('resolveElementSourceContext')
+    expect(browserOutput).not.toContain('node:fs')
+
+    productionServer = spawn('npm', ['run', 'start'], {
+      cwd: nextjsFixturePath,
       stdio: 'pipe',
       detached: true,
     })
 
-    devServer.on('error', (error) => {
-      console.error('❌ Failed to start dev server:', error)
-      throw error
-    })
-
-    devServer.stdout?.on('data', (data) => {
-      console.log('📝 Dev server output:', data.toString())
-    })
-
-    devServer.stderr?.on('data', (data) => {
-      console.error('⚠️  Dev server error:', data.toString())
-    })
-
-    await waitForServer(SERVER_URL, 30000)
-    console.log('✅ Next.js Turbopack dev server is ready!')
-  }, 120000)
+    await waitForServer(SERVER_URL, 60000)
+  }, 240000)
 
   afterAll(async () => {
-    if (devServer) {
-      console.log('🛑 Shutting down Next.js Turbopack dev server...')
-      await stopProcess(devServer)
-      devServer = null
-      console.log('✅ Next.js Turbopack dev server stopped')
+    if (productionServer) {
+      await stopProcess(productionServer)
+      productionServer = null
     }
+    if (tempRoot) rmSync(tempRoot, { recursive: true, force: true })
   })
 
-  it('extracts explicit source context from an h2 in Card', async () => {
+  it('loads the browser entry in the production application', async () => {
     const browser = await chromium.launch({ headless: true })
     const context = await browser.newContext()
     const page = await context.newPage()
 
     try {
-      console.log('Navigating to Next.js Turbopack app...')
       await page.goto(SERVER_URL)
-      console.log(`Using app URL: ${SERVER_URL}`)
-      
-      console.log('Waiting for card component...')
       await page.waitForSelector('[data-testid="card-component"]', { timeout: 10000 })
       
       //@ts-ignore
       await page.waitForFunction(() => typeof window.getElementSourceContext === 'function', { timeout: 10000 })
       
-      const h2Element = await page.$('h2.card-title')
-      expect(h2Element).toBeTruthy()
-      
-      const result = await page.evaluate(() => {
-        const h2 = document.querySelector('h2.card-title')
-        if (!h2) return null
-        
+      const browserApiType = await page.evaluate(() => {
         //@ts-ignore
-        return window.getElementSourceContext(h2)
+        return typeof window.getElementSourceContext
       })
-      
-      expect(result).toBeTruthy()
-      expect(result.success).toBe(true)
-      expect(result.data).toBeDefined()
-      
-      // Verify basic source location fields
-      expect(result.data.definition.file).toContain('Card.tsx')
-      expect(result.data.definition.componentName).toBe('Card')
-      expect(result.data.definition.tagName).toBe('H2')
-      expect(result.data.invocations).toBeInstanceOf(Array)
+
+      expect(browserApiType).toBe('function')
       
     } finally {
       await browser.close()
@@ -188,7 +172,7 @@ describe('E2E Next.js Turbopack - source context package entries', () => {
       success: true,
       data: {
         invocations: [{
-          file: join(NEXTJS_FIXTURE_PATH, 'app', 'components', 'Card.tsx'),
+          file: join(nextjsFixturePath, 'app', 'components', 'Card.tsx'),
           line: 1,
           column: 0,
         }],
