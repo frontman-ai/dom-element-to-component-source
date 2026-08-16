@@ -205,6 +205,97 @@ describe('getElementSourceContext', () => {
     })
   })
 
+  it('preserves serializable props on server definitions and invocations', async () => {
+    const element = document.createElement('button')
+    attachFiber(element, {
+      name: 'button',
+      _debugStack: serverStack('button.js', 10, 7),
+      memoizedProps: { label: 'Save', onClick: () => undefined },
+      _debugOwner: {
+        name: 'Button',
+        debugStack: serverStack('form.js', 20, 3),
+        pendingProps: { disabled: true, children: null },
+        owner: { name: 'Form' },
+      },
+    })
+
+    await expect(getElementSourceContext(element)).resolves.toEqual({
+      success: true,
+      data: {
+        definition: {
+          file: 'about://React/Server/file:///app/.next/server/button.js',
+          line: 10,
+          column: 7,
+          componentName: 'Button',
+          componentProps: { label: 'Save' },
+          tagName: 'BUTTON',
+        },
+        invocations: [{
+          file: 'about://React/Server/file:///app/.next/server/form.js',
+          line: 20,
+          column: 3,
+          componentName: 'Form',
+          componentProps: { disabled: true, children: null },
+          tagName: 'BUTTON',
+        }],
+      },
+    })
+  })
+
+  it('retains a ForwardRef name discovered by the browser stack parser', async () => {
+    const element = document.createElement('button')
+    attachFiber(element, {
+      name: '',
+      tag: 11,
+      type: { render: { name: 'Button' } },
+      _debugSource: {
+        fileName: 'src/Button.tsx',
+        lineNumber: 8,
+        columnNumber: 4,
+      },
+    } as ReactFiberNode)
+
+    await expect(getElementSourceContext(element)).resolves.toMatchObject({
+      success: true,
+      data: {
+        definition: {
+          componentName: 'Button',
+          file: 'src/Button.tsx',
+        },
+      },
+    })
+  })
+
+  it('keeps owner invocations while searching return fibers for a definition', async () => {
+    const element = document.createElement('article')
+    attachFiber(element, {
+      name: 'article',
+      _debugOwner: {
+        name: 'Post',
+        debugStack: serverStack('page.js', 30, 2),
+      },
+      return: {
+        name: 'Wrapper',
+        return: {
+          name: 'Article',
+          _debugStack: serverStack('article.js', 12, 5),
+        },
+      },
+    })
+
+    await expect(getElementSourceContext(element)).resolves.toMatchObject({
+      success: true,
+      data: {
+        definition: {
+          file: 'about://React/Server/file:///app/.next/server/article.js',
+        },
+        invocations: [{
+          file: 'about://React/Server/file:///app/.next/server/page.js',
+        }],
+      },
+    })
+  })
+
   it('bounds return-fiber traversal by maxDepth', async () => {
     const element = document.createElement('div')
     attachFiber(element, {

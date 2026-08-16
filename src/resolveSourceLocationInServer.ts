@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SourceMapConsumer } from 'source-map'
 import type { RawIndexMap, RawSourceMap } from 'source-map'
@@ -28,7 +28,11 @@ function fail(code: SourceResolutionErrorCode, message: string): never {
 
 function isWithinRoot(path: string, root: string): boolean {
   const relativePath = relative(root, path)
-  return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath))
+  return relativePath === '' || (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
 }
 
 function isRawSourceMap(value: unknown): value is RawSourceMap | RawIndexMap {

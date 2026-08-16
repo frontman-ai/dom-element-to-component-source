@@ -3,6 +3,7 @@ const packageRoot = path.resolve(__dirname, '../../..')
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ['source-map'],
   turbopack: {
     root: packageRoot,
     rules: {

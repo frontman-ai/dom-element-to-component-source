@@ -89,6 +89,15 @@ The resolver preserves ordinary locations and resolves every
 and source maps must resolve inside the canonical `projectRoot` before they are
 read.
 
+Next.js applications must keep `source-map` external so its runtime can load
+the adjacent `mappings.wasm` file:
+
+```javascript
+module.exports = {
+  serverExternalPackages: ['source-map'],
+}
+```
+
 ### Server Result
 
 ```typescript
@@ -124,7 +133,7 @@ interface SourceLocation {
 
 ## Requirements
 
-- Node.js 16 or newer for server resolution.
+- Node.js 20.19 or newer for server resolution.
 - React development metadata for browser extraction.
 - Source maps for React Server Component resolution.
 

@@ -179,7 +179,7 @@ describe('E2E Next.js Turbopack - source context package entries', () => {
     }
   })
 
-  it('imports the server entry in a Turbopack route', async () => {
+  it('resolves a source map through the server entry in a Turbopack route', async () => {
     const response = await fetch(`${SERVER_URL}/api/source-context`)
     const result = await response.json()
 
@@ -187,7 +187,11 @@ describe('E2E Next.js Turbopack - source context package entries', () => {
     expect(result).toEqual({
       success: true,
       data: {
-        invocations: [{ file: 'src/already-resolved.tsx', line: 1, column: 0 }],
+        invocations: [{
+          file: join(NEXTJS_FIXTURE_PATH, 'app', 'components', 'Card.tsx'),
+          line: 1,
+          column: 0,
+        }],
       },
     })
   })

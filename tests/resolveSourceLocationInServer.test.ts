@@ -112,6 +112,28 @@ describe('resolveElementSourceContext', () => {
     })
   })
 
+  it('accepts generated files in child paths beginning with two dots', async () => {
+    const generatedPath = resolve(projectRoot, '..cache', 'child.js')
+    const result = await resolveElementSourceContext({
+      invocations: [{
+        file: `about://React/Server/${pathToFileURL(generatedPath).href}`,
+        line: 1,
+        column: 0,
+      }],
+    }, { projectRoot })
+
+    expect(result).toEqual({
+      success: true,
+      data: {
+        invocations: [{
+          file: resolve(projectRoot, 'src/cache-child.tsx').split(sep).join('/'),
+          line: 1,
+          column: 0,
+        }],
+      },
+    })
+  })
+
   it('returns INVALID_REACT_URL for malformed React virtual locations', async () => {
     const result = await resolveElementSourceContext({
       invocations: [{

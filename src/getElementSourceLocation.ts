@@ -5,7 +5,11 @@ import {
   ReactFiberNode,
   SourceLocation,
 } from './types'
-import { parseDebugStack, validateSourceLocation } from './sourceLocationResolver'
+import {
+  extractComponentProps,
+  parseDebugStack,
+  validateSourceLocation,
+} from './sourceLocationResolver'
 
 type DebugSource = Error | {
   fileName: string
@@ -42,6 +46,7 @@ function getComponentName(fiber: ReactFiberNode | undefined): string | undefined
 
 function parseReactServerLocation(
   debugSource: DebugSource | undefined,
+  fiber: ReactFiberNode,
   componentName: string | undefined,
   tagName: string,
 ): SourceLocation | null {
@@ -71,6 +76,7 @@ function parseReactServerLocation(
     line: Number(match[2]),
     column: Number(match[3]),
     componentName,
+    componentProps: extractComponentProps(fiber),
     tagName,
   }
 }
@@ -96,7 +102,7 @@ async function parseBrowserLocation(
 
   return {
     ...sourceLocation,
-    componentName,
+    componentName: componentName || sourceLocation.componentName,
     tagName,
   }
 }
@@ -107,7 +113,7 @@ async function parseLocation(
   componentName: string | undefined,
   tagName: string,
 ): Promise<SourceLocation | null> {
-  const serverLocation = parseReactServerLocation(debugSource, componentName, tagName)
+  const serverLocation = parseReactServerLocation(debugSource, fiber, componentName, tagName)
   if (serverLocation) {
     return serverLocation
   }
@@ -183,6 +189,7 @@ export async function getElementSourceContext(
 
     const maxDepth = getMaxDepth(options.maxDepth)
     let current: ReactFiberNode | undefined = fiber
+    let fallbackInvocations: SourceLocation[] = []
 
     for (let depth = 0; current && depth < maxDepth; depth++) {
       const owner = current._debugOwner || current.owner
@@ -191,11 +198,13 @@ export async function getElementSourceContext(
 
       const currentServerDefinition = parseReactServerLocation(
         currentDebugSource,
+        current,
         componentName,
         element.tagName,
       )
       const ownerServerDefinition = parseReactServerLocation(
         owner?.debugLocation,
+        owner || current,
         componentName,
         element.tagName,
       )
@@ -203,26 +212,29 @@ export async function getElementSourceContext(
         await parseLocation(current, currentDebugSource, componentName, element.tagName)
 
       if (definition) {
+        const invocations = await getInvocations(owner, element.tagName, maxDepth)
         return {
           success: true,
           data: {
             definition,
-            invocations: await getInvocations(owner, element.tagName, maxDepth),
+            invocations: invocations.length > 0 ? invocations : fallbackInvocations,
           },
         }
       }
 
       if (owner) {
         const invocations = await getInvocations(owner, element.tagName, maxDepth)
-        if (invocations.length > 0) {
-          return { success: true, data: { invocations } }
+        if (fallbackInvocations.length === 0 && invocations.length > 0) {
+          fallbackInvocations = invocations
         }
       }
 
       current = current.return
     }
 
-    return { success: false, error: 'No source context found in fiber tree' }
+    return fallbackInvocations.length > 0
+      ? { success: true, data: { invocations: fallbackInvocations } }
+      : { success: false, error: 'No source context found in fiber tree' }
   } catch (error) {
     return {
       success: false,
