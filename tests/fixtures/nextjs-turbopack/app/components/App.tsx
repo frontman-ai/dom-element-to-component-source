@@ -2,10 +2,10 @@
 
 import React, { useState } from 'react'
 import { Card } from './Card'
-import { getElementSourceLocation } from "../../../../../src/getElementSourceLocation";
+import { getElementSourceContext } from 'dom-element-to-component-source'
 
 //@ts-ignore
-globalThis.getElementSourceLocation = getElementSourceLocation
+globalThis.getElementSourceContext = getElementSourceContext
 
 export function App() {
   const [count, setCount] = useState(0)

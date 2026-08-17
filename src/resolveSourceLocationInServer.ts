@@ -1,184 +1,252 @@
-import { SourceLocation } from './types'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { SourceMapConsumer } from 'source-map'
-import { readFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { createRequire } from 'node:module'
+import type { RawIndexMap, RawSourceMap } from 'source-map'
+import {
+  ElementSourceContext,
+  ResolveElementSourceContextOptions,
+  SourceLocation,
+  SourceResolutionErrorCode,
+  SourceResolutionResult,
+} from './types'
 
-let sourceMapInitialized = false
+const REACT_SERVER_PREFIX = 'about://React/Server/'
 
-/**
- * Initializes SourceMapConsumer with the WASM file.
- * This must be called before using SourceMapConsumer.
- */
-function ensureSourceMapInitialized(): void {
-  if (sourceMapInitialized) {
-    return
+class SourceResolutionFailure extends Error {
+  constructor(
+    readonly code: SourceResolutionErrorCode,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+function fail(code: SourceResolutionErrorCode, message: string): never {
+  throw new SourceResolutionFailure(code, message)
+}
+
+function isWithinRoot(path: string, root: string): boolean {
+  const relativePath = relative(root, path)
+  return relativePath === '' || (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  )
+}
+
+function isRawSourceMap(value: unknown): value is RawSourceMap | RawIndexMap {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const map = value as Record<string, unknown>
+  if (typeof map.version !== 'number') {
+    return false
+  }
+
+  if (Array.isArray(map.sections)) {
+    return map.sections.every(section => {
+      if (!section || typeof section !== 'object') {
+        return false
+      }
+      const { offset, map: sectionMap } = section as Record<string, unknown>
+      if (!offset || typeof offset !== 'object') {
+        return false
+      }
+      const position = offset as Record<string, unknown>
+      return typeof position.line === 'number' &&
+        typeof position.column === 'number' &&
+        isRawSourceMap(sectionMap)
+    })
+  }
+
+  return Array.isArray(map.sources) &&
+    map.sources.every(source => typeof source === 'string') &&
+    Array.isArray(map.names) &&
+    map.names.every(name => typeof name === 'string') &&
+    typeof map.mappings === 'string'
+}
+
+async function getCanonicalGeneratedPath(
+  location: SourceLocation,
+  projectRoot: string,
+): Promise<string> {
+  const rawUrl = location.file.slice(REACT_SERVER_PREFIX.length)
+  let generatedPath: string
+  try {
+    const generatedUrl = new URL(rawUrl)
+    if (generatedUrl.protocol !== 'file:') {
+      return fail('INVALID_REACT_URL', `React virtual location is not a file URL: ${location.file}`)
+    }
+    generatedPath = fileURLToPath(generatedUrl)
+  } catch {
+    return fail('INVALID_REACT_URL', `Invalid React virtual location: ${location.file}`)
   }
 
   try {
-    let wasmPath: string | null = null
-    
-    try {
-      const require = createRequire(import.meta.url)
-      const sourceMapPath = require.resolve('source-map/package.json')
-      wasmPath = join(dirname(sourceMapPath), 'lib', 'mappings.wasm')
-    } catch {
-      try {
-        const possiblePaths = [
-          join(process.cwd(), 'node_modules', 'source-map', 'lib', 'mappings.wasm'),
-          join(process.cwd(), '..', 'node_modules', 'source-map', 'lib', 'mappings.wasm'),
-          join(process.cwd(), '..', '..', 'node_modules', 'source-map', 'lib', 'mappings.wasm'),
-        ]
-        
-        for (const path of possiblePaths) {
-          if (existsSync(path)) {
-            wasmPath = path
-            break
-          }
-        }
-        
-        if (!wasmPath) {
-          wasmPath = possiblePaths[0]
-        }
-      } catch {
-        wasmPath = join(process.cwd(), 'node_modules', 'source-map', 'lib', 'mappings.wasm')
-      }
-    }
-
-    if (wasmPath && existsSync(wasmPath)) {
-      const wasmBuffer = readFileSync(wasmPath)
-      const wasmArrayBuffer = wasmBuffer.buffer.slice(
-        wasmBuffer.byteOffset,
-        wasmBuffer.byteOffset + wasmBuffer.byteLength
+    const canonicalPath = await realpath(generatedPath)
+    const generatedStat = await stat(canonicalPath)
+    if (!generatedStat.isFile() || !isWithinRoot(canonicalPath, projectRoot)) {
+      return fail(
+        'GENERATED_FILE_NOT_FOUND',
+        `Generated file is not inside project root: ${generatedPath}`,
       )
-      
-      // Type assertion needed because TypeScript definitions are incomplete
-      ;(SourceMapConsumer as any).initialize({
-        'lib/mappings.wasm': wasmArrayBuffer
-      })
-      sourceMapInitialized = true
-    } else if (wasmPath) {
-      // Fallback to path string for environments where file can't be read directly
-      ;(SourceMapConsumer as any).initialize({
-        'lib/mappings.wasm': wasmPath
-      })
-      sourceMapInitialized = true
-    } else {
-      throw new Error('Could not determine path to mappings.wasm')
     }
+    return canonicalPath
   } catch (error) {
-    console.warn('Failed to initialize SourceMapConsumer WASM:', error)
-    sourceMapInitialized = false
+    if (error instanceof SourceResolutionFailure) {
+      throw error
+    }
+    return fail('GENERATED_FILE_NOT_FOUND', `Generated file not found: ${generatedPath}`)
+  }
+}
+
+async function getCanonicalSourceMapPath(
+  generatedPath: string,
+  projectRoot: string,
+): Promise<string> {
+  const candidates = [
+    `${generatedPath}.map`,
+    ...(generatedPath.endsWith('.js') ? [generatedPath.replace(/\.js$/, '.map')] : []),
+  ]
+
+  for (const candidate of candidates) {
+    try {
+      const canonicalPath = await realpath(candidate)
+      const mapStat = await stat(canonicalPath)
+      if (mapStat.isFile() && isWithinRoot(canonicalPath, projectRoot)) {
+        return canonicalPath
+      }
+    } catch {
+      // Try the alternate source-map name.
+    }
+  }
+
+  return fail('SOURCE_MAP_NOT_FOUND', `Source map not found for ${generatedPath}`)
+}
+
+function resolveOriginalSource(
+  source: string,
+  sourceMapPath: string,
+  projectRoot: string,
+): string {
+  const projectPrefixes = [
+    'turbopack:///[project]/',
+    'webpack:///[project]/',
+  ]
+  const projectPrefix = projectPrefixes.find(prefix => source.startsWith(prefix))
+  if (projectPrefix) {
+    return resolve(projectRoot, source.slice(projectPrefix.length)).replace(/\\/g, '/')
+  }
+
+  const webpackProjectSource = source.match(/^webpack:\/\/[^/]*\/(?:\.\/)?(.+)$/)
+  if (webpackProjectSource) {
+    return resolve(projectRoot, webpackProjectSource[1]).replace(/\\/g, '/')
+  }
+
+  if (source.startsWith('file:')) {
+    try {
+      return fileURLToPath(source).replace(/\\/g, '/')
+    } catch {
+      return fail('RESOLUTION_FAILED', `Invalid original source file URL: ${source}`)
+    }
+  }
+
+  const sourcePath = isAbsolute(source)
+    ? source
+    : resolve(dirname(sourceMapPath), source)
+  return sourcePath.replace(/\\/g, '/')
+}
+
+async function resolveSourceLocation(
+  location: SourceLocation,
+  projectRoot: string,
+): Promise<SourceLocation> {
+  if (!location.file.startsWith(REACT_SERVER_PREFIX)) {
+    return location
+  }
+
+  const generatedPath = await getCanonicalGeneratedPath(location, projectRoot)
+  const sourceMapPath = await getCanonicalSourceMapPath(generatedPath, projectRoot)
+
+  let rawSourceMap: RawSourceMap | RawIndexMap
+  try {
+    const parsedSourceMap: unknown = JSON.parse(await readFile(sourceMapPath, 'utf8'))
+    if (!isRawSourceMap(parsedSourceMap)) {
+      return fail('RESOLUTION_FAILED', `Invalid source map structure: ${sourceMapPath}`)
+    }
+    rawSourceMap = parsedSourceMap
+  } catch (error) {
+    return fail(
+      'RESOLUTION_FAILED',
+      `Failed to read source map ${sourceMapPath}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
+  }
+
+  let original: ReturnType<SourceMapConsumer['originalPositionFor']>
+  try {
+    original = await SourceMapConsumer.with(rawSourceMap, null, consumer =>
+      consumer.originalPositionFor({ line: location.line, column: location.column }),
+    )
+  } catch (error) {
+    return fail(
+      'RESOLUTION_FAILED',
+      `Failed to consume source map ${sourceMapPath}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
+  }
+
+  if (original.source === null || original.line === null) {
+    return fail(
+      'POSITION_NOT_FOUND',
+      `No original position for ${generatedPath}:${location.line}:${location.column}`,
+    )
+  }
+
+  return {
+    ...location,
+    file: resolveOriginalSource(original.source, sourceMapPath, projectRoot),
+    line: original.line,
+    column: original.column ?? location.column,
   }
 }
 
 /**
- * Resolves a source location that starts with "about://React/Server" by using source maps
- * to map from the server chunk file to the original source file.
- * 
- * @param sourceLocation - The source location with a file path starting with "about://React/Server"
- * @returns Promise<SourceLocation> The resolved source location pointing to the original source file
- * 
- * @example
- * ```typescript
- * const serverLocation = {
- *   file: 'about://React/Server/file:///path/to/.next/server/chunks/ssr/file.js',
- *   line: 500,
- *   column: 0
- * }
- * const resolved = await resolveSourceLocationInServer(serverLocation)
- * // resolved.file will be the original source file path
- * ```
+ * Resolves React virtual locations. Returned source paths are untrusted output;
+ * consumers must authorize them before reading or exposing them.
  */
-export async function resolveSourceLocationInServer(
-  sourceLocation: SourceLocation
-): Promise<SourceLocation> {
-  if (!sourceLocation.file.startsWith('about://React/Server/')) {
-    return sourceLocation
-  }
-
+export async function resolveElementSourceContext(
+  context: ElementSourceContext,
+  options: ResolveElementSourceContextOptions,
+): Promise<SourceResolutionResult> {
   try {
-    let filePath = sourceLocation.file.replace(/^about:\/\/React\/Server\//, '')
-    
-    if (filePath.startsWith('file:///')) {
-      filePath = filePath.replace(/^file:\/\/\//, '/')
-    } else if (filePath.startsWith('file://')) {
-      filePath = filePath.replace(/^file:\/\//, '/')
-    }
-    
-    try {
-      filePath = decodeURIComponent(filePath)
-    } catch {
+    const projectRoot = await realpath(options.projectRoot)
+    const definition = context.definition
+      ? await resolveSourceLocation(context.definition, projectRoot)
+      : undefined
+    const invocations: SourceLocation[] = []
+    for (const invocation of context.invocations) {
+      invocations.push(await resolveSourceLocation(invocation, projectRoot))
     }
 
-    let sourceMapPath = filePath + '.map'
-    
-    if (!existsSync(sourceMapPath)) {
-      sourceMapPath = filePath.replace(/\.js$/, '.map')
-      if (!existsSync(sourceMapPath)) {
-        if (!filePath.endsWith('.js')) {
-          sourceMapPath = filePath + '.map'
-        }
-        if (!existsSync(sourceMapPath)) {
-          return sourceLocation
-        }
-      }
+    return {
+      success: true,
+      data: definition ? { definition, invocations } : { invocations },
     }
-
-    const sourceMapContent = readFileSync(sourceMapPath, 'utf-8')
-    const rawSourceMap = JSON.parse(sourceMapContent)
-    
-    ensureSourceMapInitialized()
-    
-    const consumer = await new Promise<SourceMapConsumer>((resolve) => {
-      SourceMapConsumer.with(rawSourceMap, null, (consumer) => {
-        resolve(consumer)
-      })
-    })
-
-    const originalPosition = consumer.originalPositionFor({
-      line: sourceLocation.line,
-      column: sourceLocation.column
-    })
-
-    consumer.destroy()
-
-    if (originalPosition.source !== null && originalPosition.line !== null) {
-      let resolvedSource = originalPosition.source
-      
-      if (resolvedSource.startsWith('file:///')) {
-        resolvedSource = resolvedSource.replace(/^file:\/\/\//, '/')
-      } else if (resolvedSource.startsWith('file://')) {
-        resolvedSource = resolvedSource.replace(/^file:\/\//, '/')
-      }
-      
-      if (!resolvedSource.startsWith('/')) {
-        if (rawSourceMap.sourceRoot) {
-          const sourceMapDir = dirname(sourceMapPath)
-          if (!rawSourceMap.sourceRoot.startsWith('/')) {
-            resolvedSource = join(sourceMapDir, rawSourceMap.sourceRoot, resolvedSource)
-          } else {
-            resolvedSource = join(rawSourceMap.sourceRoot, resolvedSource)
-          }
-        } else {
-          const sourceMapDir = dirname(sourceMapPath)
-          resolvedSource = join(sourceMapDir, resolvedSource)
-        }
-      }
-
-      resolvedSource = resolvedSource.replace(/\\/g, '/')
-
-      return {
-        file: resolvedSource,
-        line: originalPosition.line || sourceLocation.line,
-        column: originalPosition.column !== null ? originalPosition.column : sourceLocation.column,
-        componentName: sourceLocation.componentName,
-        sourceCode: sourceLocation.sourceCode
-      }
-    }
-
-    return sourceLocation
   } catch (error) {
-    return sourceLocation
+    if (error instanceof SourceResolutionFailure) {
+      return {
+        success: false,
+        error: { code: error.code, message: error.message },
+      }
+    }
+
+    return {
+      success: false,
+      error: {
+        code: 'RESOLUTION_FAILED',
+        message: error instanceof Error ? error.message : 'Unknown source resolution error',
+      },
+    }
   }
 }

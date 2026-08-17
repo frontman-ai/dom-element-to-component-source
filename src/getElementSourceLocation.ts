@@ -1,164 +1,166 @@
-import { 
-  SourceLocationResult, 
-  DomElementWithReactInternals, 
+import {
+  DomElementWithReactInternals,
+  ElementComponentNameOptions,
+  ElementSourceContextOptions,
+  ElementSourceContextResult,
   ReactFiberNode,
-  SourceLocationOptions,
-  SourceLocation
+  SourceLocation,
 } from './types'
-import { 
+import {
+  extractComponentProps,
+  getFiberComponentName,
   parseDebugStack,
-  validateSourceLocation 
+  validateSourceLocation,
 } from './sourceLocationResolver'
 
-/**
- * Traverses up the React Fiber tree to find a fiber node with debug stack information
- * @param fiberNode - The starting fiber node
- * @param maxDepth - Maximum depth to traverse (default: 10)
- * @returns The first React Fiber node with debug stack information, or null if not found
- */
-function findFiberWithDebugStack(fiberNode: ReactFiberNode, maxDepth: number = 10): ReactFiberNode | null {
-  let current: ReactFiberNode | null = fiberNode
-  let depth = 0
+type DebugSource = Error | {
+  fileName: string
+  lineNumber: number
+  columnNumber: number
+}
 
-  while (current && depth < maxDepth) {
-    // Check _debugOwner chain first
-    if (current._debugOwner && hasDebugStack(current._debugOwner)) {
-      return current._debugOwner
-    }
+const DEFAULT_MAX_DEPTH = 10
+const REACT_SERVER_PREFIX = 'about://React/Server/'
 
-    // Check current node
-    if (hasDebugStack(current)) {
-      return current
-    }
-
-    // Traverse up via return (parent) or sibling
-    if (current.return) {
-      current = current.return
-      depth++
-    } else if (current.sibling) {
-      current = current.sibling
-      depth++
-    } else {
-      break
-    }
+function getMaxDepth(maxDepth: number | undefined): number {
+  if (maxDepth === undefined || !Number.isFinite(maxDepth)) {
+    return DEFAULT_MAX_DEPTH
   }
 
-  return null
+  return Math.max(0, Math.floor(maxDepth))
 }
 
-/**
- * Checks if a fiber node has debug stack information
- * @param fiberNode - The React Fiber node to check
- * @returns True if the node has debug stack information
- */
-function hasDebugStack(fiberNode: ReactFiberNode): boolean {
-  return !!(fiberNode._debugStack || (fiberNode as any).debugStack || fiberNode._debugSource)
+function getDebugSource(fiber: ReactFiberNode | undefined): DebugSource | undefined {
+  return fiber?._debugStack || fiber?.debugStack || fiber?._debugSource
 }
 
-/**
- * Gets the source location for a DOM element
- * @param element - The DOM element
- * @param maxDepth - Maximum depth to traverse in fiber tree (default: 10)
- * @returns The source location with tagName, or null if not found
- */
-async function getElementSourceLocationInternal(
-  element: Element,
-  maxDepth: number = 10
+function getOwner(fiber: ReactFiberNode | undefined): ReactFiberNode | undefined {
+  return fiber?._debugOwner || fiber?.owner
+}
+
+function parseReactServerLocation(
+  debugSource: DebugSource | undefined,
+  fiber: ReactFiberNode,
+  componentName: string | undefined,
+  tagName: string,
+): SourceLocation | null {
+  if (!debugSource || !('stack' in debugSource) || typeof debugSource.stack !== 'string') {
+    return null
+  }
+
+  const stackLine = debugSource.stack
+    .split('\n')
+    .find(line => line.includes(REACT_SERVER_PREFIX))
+  if (!stackLine) {
+    return null
+  }
+
+  const source = stackLine
+    .slice(stackLine.indexOf(REACT_SERVER_PREFIX))
+    .replace(/\)?$/, '')
+  const match = source.match(
+    /^(about:\/\/React\/Server\/file:\/\/\/.*?)(?:\?[^:]*)?:(\d+):(\d+)$/,
+  )
+  if (!match) {
+    return null
+  }
+
+  return {
+    file: match[1],
+    line: Number(match[2]),
+    column: Number(match[3]),
+    componentName,
+    componentProps: extractComponentProps(fiber),
+    tagName,
+  }
+}
+
+function hasReactVirtualLocation(debugSource: DebugSource | undefined): boolean {
+  return !!(
+    debugSource &&
+    'stack' in debugSource &&
+    typeof debugSource.stack === 'string' &&
+    debugSource.stack.includes('about://React/')
+  )
+}
+
+async function parseBrowserLocation(
+  fiber: ReactFiberNode,
+  componentName: string | undefined,
+  tagName: string,
 ): Promise<SourceLocation | null> {
-  const fiberNode = extractFiberNode(element)
-  if (!fiberNode) {
-    return null
-  }
-
-  // First try to use the fiber node directly attached to the element
-  if (hasDebugStack(fiberNode)) {
-    const sourceLocation = await parseDebugStack(fiberNode)
-    if (sourceLocation && validateSourceLocation(sourceLocation)) {
-      sourceLocation.tagName = element.tagName
-      return sourceLocation
-    }
-  }
-
-  // If the direct fiber doesn't have debug stack, traverse up the fiber tree
-  const fiberWithDebugStack = findFiberWithDebugStack(fiberNode, maxDepth)
-  if (!fiberWithDebugStack) {
-    return null
-  }
-
-  const sourceLocation = await parseDebugStack(fiberWithDebugStack)
+  const sourceLocation = await parseDebugStack(fiber)
   if (!sourceLocation || !validateSourceLocation(sourceLocation)) {
     return null
   }
 
-  // Add tagName to the source location
-  sourceLocation.tagName = element.tagName
-
-  return sourceLocation
+  return {
+    ...sourceLocation,
+    componentName: componentName || sourceLocation.componentName,
+    tagName,
+  }
 }
 
-/**
- * Gets the immediate parent DOM element's source location
- * @param element - The starting DOM element
- * @param maxDepth - Maximum depth to traverse (default: 10)
- * @returns The parent element's source location with recursively populated parents, or null if not found
- */
-async function getParentSourceLocation(
-  element: Element,
-  maxDepth: number = 10
+async function parseLocation(
+  fiber: ReactFiberNode,
+  debugSource: DebugSource | undefined,
+  componentName: string | undefined,
+  tagName: string,
 ): Promise<SourceLocation | null> {
-  if (maxDepth <= 0) {
+  const serverLocation = parseReactServerLocation(debugSource, fiber, componentName, tagName)
+  if (serverLocation) {
+    return serverLocation
+  }
+
+  if (!debugSource || hasReactVirtualLocation(debugSource)) {
     return null
   }
 
-  // Get the immediate parent DOM element
-  const parentElement = element.parentElement
-  if (!parentElement) {
-    return null
-  }
-
-  // Get source location for the parent element
-  const parentLocation = await getElementSourceLocationInternal(parentElement, maxDepth)
-  if (!parentLocation) {
-    // If no source location found, try climbing further up the DOM tree
-    return getParentSourceLocation(parentElement, maxDepth - 1)
-  }
-
-  // Recursively get the parent's parent element source location
-  const grandParentLocation = await getParentSourceLocation(parentElement, maxDepth - 1)
-  if (grandParentLocation) {
-    parentLocation.parent = grandParentLocation
-  }
-
-  return parentLocation
+  return parseBrowserLocation(fiber, componentName, tagName)
 }
 
-/**
- * Extracts a React Fiber node from a DOM element
- * @param element - The DOM element to analyze
- * @returns The React Fiber node or null if not found
- */
-function extractFiberNode(element: Element): ReactFiberNode | null {
-  const elementWithReact = element as DomElementWithReactInternals
+async function getInvocations(
+  firstOwner: ReactFiberNode | undefined,
+  tagName: string,
+  maxDepth: number,
+): Promise<SourceLocation[]> {
+  const invocations: SourceLocation[] = []
 
-  const possibleFiberNodes = [
-    elementWithReact._reactInternals,
-    elementWithReact._reactInternalFiber,
-    elementWithReact.__reactInternalInstance,
-    elementWithReact._reactInternalInstance
-  ]
-
-  for (const fiberNode of possibleFiberNodes) {
-    if (fiberNode) {
-      return fiberNode
+  for (const current of walkFiberChain(firstOwner, getOwner, maxDepth)) {
+    const enclosingOwner = getOwner(current)
+    const location = await parseLocation(
+      current,
+      getDebugSource(current),
+      (enclosingOwner && getFiberComponentName(enclosingOwner)) || getFiberComponentName(current),
+      tagName,
+    )
+    if (location) {
+      invocations.push(location)
     }
   }
 
-  const elementKeys = Object.keys(elementWithReact)
-  for (const key of elementKeys) {
-    if (key.startsWith('__reactFiber$') || key.startsWith('_reactFiber$')) {
-      const fiberNode = (elementWithReact as any)[key]
-      if (fiberNode && typeof fiberNode === 'object') {
-        return fiberNode
+  return invocations
+}
+
+function extractFiberNode(element: Element): ReactFiberNode | null {
+  const elementWithReact = element as DomElementWithReactInternals
+  const directFiber = elementWithReact._reactInternals ||
+    elementWithReact._reactInternalFiber ||
+    elementWithReact.__reactInternalInstance ||
+    elementWithReact._reactInternalInstance
+  if (directFiber) {
+    return directFiber
+  }
+
+  for (const key of Object.keys(elementWithReact)) {
+    if (
+      key.startsWith('__reactFiber$') ||
+      key.startsWith('_reactFiber$') ||
+      key.startsWith('__reactInternalInstance$')
+    ) {
+      const fiber = (elementWithReact as unknown as Record<string, unknown>)[key]
+      if (fiber && typeof fiber === 'object') {
+        return fiber as ReactFiberNode
       }
     }
   }
@@ -166,96 +168,119 @@ function extractFiberNode(element: Element): ReactFiberNode | null {
   return null
 }
 
-/**
- * Retrieves the source location of a DOM element in a React application
- * 
- * This function extracts the original source location of a DOM element by traversing
- * the React Fiber tree and accessing debug stack information. It supports both
- * webpack and Next.js/Turbopack builds with source map resolution.
- * 
- * @param element - The DOM element to analyze
- * @param options - Configuration options for source location extraction
- * @returns Promise<SourceLocationResult> containing either the source location or an error
- * 
- * @example
- * ```typescript
- * const button = document.querySelector('button')
- * const result = await getElementSourceLocation(button)
- * if (result.success) {
- *   console.log(`Component: ${result.data.componentName}`)
- *   console.log(`File: ${result.data.file}:${result.data.line}:${result.data.column}`)
- * }
- * ```
- * 
- * @example
- * ```typescript
- * const result = await getElementSourceLocation(button)
- * ```
- */
-export async function getElementSourceLocation(
-  element: Element, 
-  options: SourceLocationOptions = {}
-): Promise<SourceLocationResult> {
-  try {
-    const elementInstance = element.ownerDocument.defaultView?.Element || Element
-    if (!element || !(element instanceof elementInstance)) {
-      return {
-        success: false,
-        error: 'Invalid element provided'
-      }
-    }
-
-    const fiberNode = extractFiberNode(element)
-    if (!fiberNode) {
-      return {
-        success: false,
-        error: 'No React Fiber node found on element'
-      }
-    }
-
-    const maxDepth = options.maxDepth || 10
-    const fiberWithDebugStack = findFiberWithDebugStack(fiberNode, maxDepth)
-    
-    if (!fiberWithDebugStack) {
-      return {
-        success: false,
-        error: 'No debug stack information found in fiber tree'
-      }
-    }
-
-    let sourceLocation = await parseDebugStack(fiberWithDebugStack)
-    if (!sourceLocation) {
-      return {
-        success: false,
-        error: 'No debug stack information found on Fiber node'
-      }
-    }
-
-    if (!validateSourceLocation(sourceLocation)) {
-      return {
-        success: false,
-        error: 'Invalid source location data found'
-      }
-    }
-
-    // Add tagName to the source location
-    sourceLocation.tagName = element.tagName
-
-    // Get parent element source location (immediate DOM parent)
-    const parent = await getParentSourceLocation(element, maxDepth)
-    if (parent) {
-      sourceLocation.parent = parent
-    }
-
-    return {
-      success: true,
-      data: sourceLocation
-    }
-  } catch (error) {
-    return {
-      success: false,
-      error: `Error extracting source location: ${error instanceof Error ? error.message : 'Unknown error'}`
-    }
+function* walkFiberChain(
+  first: ReactFiberNode | undefined,
+  next: (fiber: ReactFiberNode) => ReactFiberNode | undefined,
+  maxDepth: number,
+): Generator<ReactFiberNode> {
+  let current = first
+  for (let depth = 0; current && depth < maxDepth; depth++) {
+    yield current
+    current = next(current)
   }
 }
 
+export function getElementComponentName(
+  element: Element,
+  options: ElementComponentNameOptions = {},
+): string | undefined {
+  const fiber = extractFiberNode(element)
+  if (!fiber) {
+    return undefined
+  }
+
+  const maxDepth = getMaxDepth(options.maxDepth)
+  const excludedNames = new Set([
+    'Fragment',
+    'Suspense',
+    ...(options.excludedNames || []),
+  ])
+  const isEligible = (name: string | undefined): name is string => !!name &&
+    !excludedNames.has(name) &&
+    (options.includeUnderscorePrefixed !== false || !name.startsWith('_'))
+
+  for (const owner of walkFiberChain(getOwner(fiber), getOwner, maxDepth)) {
+    const name = getFiberComponentName(owner)
+    if (isEligible(name)) {
+      return name
+    }
+  }
+
+  for (const returnFiber of walkFiberChain(fiber.return, node => node.return, maxDepth)) {
+    const name = getFiberComponentName(returnFiber)
+    if (isEligible(name)) {
+      return name
+    }
+  }
+
+  return undefined
+}
+
+export async function getElementSourceContext(
+  element: Element,
+  options: ElementSourceContextOptions = {},
+): Promise<ElementSourceContextResult> {
+  try {
+    const elementInstance = element?.ownerDocument.defaultView?.Element || Element
+    if (!element || !(element instanceof elementInstance)) {
+      return { success: false, error: 'Invalid element provided' }
+    }
+
+    const fiber = extractFiberNode(element)
+    if (!fiber) {
+      return { success: false, error: 'No React Fiber node found on element' }
+    }
+
+    const maxDepth = getMaxDepth(options.maxDepth)
+    let fallbackInvocations: SourceLocation[] = []
+
+    for (const current of walkFiberChain(fiber, node => node.return, maxDepth)) {
+      const owner = getOwner(current)
+      const componentName = (owner && getFiberComponentName(owner)) ||
+        getFiberComponentName(current)
+      const currentDebugSource = getDebugSource(current)
+
+      const currentServerDefinition = parseReactServerLocation(
+        currentDebugSource,
+        current,
+        componentName,
+        element.tagName,
+      )
+      const ownerServerDefinition = parseReactServerLocation(
+        owner?.debugLocation,
+        owner || current,
+        componentName,
+        element.tagName,
+      )
+      const definition = currentServerDefinition || ownerServerDefinition ||
+        await parseLocation(current, currentDebugSource, componentName, element.tagName)
+
+      if (definition) {
+        const invocations = await getInvocations(owner, element.tagName, maxDepth)
+        return {
+          success: true,
+          data: {
+            definition,
+            invocations: invocations.length > 0 ? invocations : fallbackInvocations,
+          },
+        }
+      }
+
+      if (owner) {
+        const invocations = await getInvocations(owner, element.tagName, maxDepth)
+        if (fallbackInvocations.length === 0 && invocations.length > 0) {
+          fallbackInvocations = invocations
+        }
+      }
+    }
+
+    return fallbackInvocations.length > 0
+      ? { success: true, data: { invocations: fallbackInvocations } }
+      : { success: false, error: 'No source context found in fiber tree' }
+  } catch (error) {
+    return {
+      success: false,
+      error: `Error extracting source context: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    }
+  }
+}

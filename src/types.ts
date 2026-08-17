@@ -16,8 +16,6 @@ export interface SourceLocation {
   tagName?: string
   /** The original source code at this location (if available) */
   sourceCode?: string
-  /** The immediate parent DOM element's source location */
-  parent?: SourceLocation
   /** Component props (only serializable values: primitives, arrays, and simple objects) */
   componentProps?: SerializableProps
 }
@@ -49,6 +47,9 @@ export interface ReactFiberNode {
   type?: {
     name?: string
     displayName?: string
+    render?: {
+      name?: string
+    }
   }
   /** Alternative debug source location (older React versions) */
   _debugSource?: {
@@ -56,6 +57,8 @@ export interface ReactFiberNode {
     lineNumber: number
     columnNumber: number
   }
+  /** JSX definition metadata used by React Server Components */
+  debugLocation?: Error
   _debugOwner?: ReactFiberNode
   /** Owner fiber node (used in Next.js React) */
   owner?: ReactFiberNode
@@ -73,8 +76,8 @@ export interface ReactFiberNode {
 
 /**
  * DOM element extended with React internal properties
- * Note: React may also add dynamic properties like __reactFiber$* or _reactFiber$* 
- * with random postfixes that are handled at runtime
+ * Note: React may also add dynamic properties like __reactFiber$*, _reactFiber$*,
+ * or __reactInternalInstance$* with random postfixes that are handled at runtime
  */
 export interface DomElementWithReactInternals extends Element {
   /** React 16+ internal fiber reference */
@@ -87,30 +90,46 @@ export interface DomElementWithReactInternals extends Element {
   _reactInternalInstance?: ReactFiberNode
 }
 
-/**
- * Result type for source location extraction
- */
-export type SourceLocationResult = 
-  | { success: true; data: SourceLocation }
-  | { success: false; error: string }
-
-/**
- * Source map consumer interface for resolving original positions
- */
-export interface SourceMapConsumer {
-  originalPositionFor(position: { line: number; column: number }): {
-    source: string | null
-    line: number | null
-    column: number | null
-    name: string | null
-  }
+export interface ElementSourceContext {
+  definition?: SourceLocation
+  invocations: SourceLocation[]
 }
 
+export type ElementSourceContextResult =
+  | { success: true; data: ElementSourceContext }
+  | { success: false; error: string }
 
-/**
- * Configuration options for source location extraction
- */
-export interface SourceLocationOptions {
-  /** Maximum depth to traverse up the fiber tree */
+export type SourceResolutionErrorCode =
+  | 'INVALID_REACT_URL'
+  | 'GENERATED_FILE_NOT_FOUND'
+  | 'SOURCE_MAP_NOT_FOUND'
+  | 'POSITION_NOT_FOUND'
+  | 'RESOLUTION_FAILED'
+
+export type SourceResolutionResult =
+  | { success: true; data: ElementSourceContext }
+  | {
+      success: false
+      error: {
+        code: SourceResolutionErrorCode
+        message: string
+      }
+    }
+
+export interface ResolveElementSourceContextOptions {
+  projectRoot: string
+}
+
+export interface ElementSourceContextOptions {
+  /** Maximum number of Fiber and owner nodes to inspect */
   maxDepth?: number
+}
+
+export interface ElementComponentNameOptions {
+  /** Maximum number of owner and return Fiber nodes to inspect */
+  maxDepth?: number
+  /** Component names to ignore in addition to Fragment and Suspense */
+  excludedNames?: readonly string[]
+  /** Whether names beginning with an underscore are eligible. Defaults to true. */
+  includeUnderscorePrefixed?: boolean
 }
