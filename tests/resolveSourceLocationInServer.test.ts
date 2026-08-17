@@ -134,55 +134,42 @@ describe('resolveElementSourceContext', () => {
     })
   })
 
-  it('returns INVALID_REACT_URL for malformed React virtual locations', async () => {
+  it.each([
+    [
+      'INVALID_REACT_URL for non-file React URLs',
+      { file: 'about://React/Server/https://example.com/chunk.js', line: 1, column: 0 },
+      'INVALID_REACT_URL',
+    ],
+    [
+      'GENERATED_FILE_NOT_FOUND for missing files',
+      serverLocation('missing.js'),
+      'GENERATED_FILE_NOT_FOUND',
+    ],
+    [
+      'GENERATED_FILE_NOT_FOUND for out-of-root files',
+      { file: `about://React/Server/${pathToFileURL(__filename).href}`, line: 1, column: 0 },
+      'GENERATED_FILE_NOT_FOUND',
+    ],
+    [
+      'SOURCE_MAP_NOT_FOUND for missing maps',
+      serverLocation('no-map.js'),
+      'SOURCE_MAP_NOT_FOUND',
+    ],
+    [
+      'POSITION_NOT_FOUND for unmapped positions',
+      serverLocation('no-position.js'),
+      'POSITION_NOT_FOUND',
+    ],
+    [
+      'RESOLUTION_FAILED for malformed maps',
+      serverLocation('malformed.js'),
+      'RESOLUTION_FAILED',
+    ],
+  ] as const)('returns %s', async (_case, location, code) => {
     const result = await resolveElementSourceContext({
-      invocations: [{
-        file: 'about://React/Server/https://example.com/chunk.js',
-        line: 1,
-        column: 0,
-      }],
+      invocations: [location],
     }, { projectRoot })
 
-    expectErrorCode(result, 'INVALID_REACT_URL')
-  })
-
-  it('returns GENERATED_FILE_NOT_FOUND for missing or out-of-root generated files', async () => {
-    const missing = await resolveElementSourceContext({
-      invocations: [serverLocation('missing.js')],
-    }, { projectRoot })
-    const outside = await resolveElementSourceContext({
-      invocations: [{
-        file: `about://React/Server/${pathToFileURL(__filename).href}`,
-        line: 1,
-        column: 0,
-      }],
-    }, { projectRoot })
-
-    expectErrorCode(missing, 'GENERATED_FILE_NOT_FOUND')
-    expectErrorCode(outside, 'GENERATED_FILE_NOT_FOUND')
-  })
-
-  it('returns SOURCE_MAP_NOT_FOUND instead of an unchanged virtual location', async () => {
-    const result = await resolveElementSourceContext({
-      invocations: [serverLocation('no-map.js')],
-    }, { projectRoot })
-
-    expectErrorCode(result, 'SOURCE_MAP_NOT_FOUND')
-  })
-
-  it('returns POSITION_NOT_FOUND when a map has no original position', async () => {
-    const result = await resolveElementSourceContext({
-      invocations: [serverLocation('no-position.js')],
-    }, { projectRoot })
-
-    expectErrorCode(result, 'POSITION_NOT_FOUND')
-  })
-
-  it('returns RESOLUTION_FAILED for malformed source maps', async () => {
-    const result = await resolveElementSourceContext({
-      invocations: [serverLocation('malformed.js')],
-    }, { projectRoot })
-
-    expectErrorCode(result, 'RESOLUTION_FAILED')
+    expectErrorCode(result, code)
   })
 })

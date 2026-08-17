@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { chromium } from 'playwright'
 import { basename, join } from 'node:path'
-import { spawn, ChildProcess } from 'child_process'
-import { setTimeout } from 'timers/promises'
+import type { ChildProcess } from 'node:child_process'
 import {
   cpSync,
   existsSync,
@@ -13,54 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-
-async function waitForServer(url: string, timeoutMs: number): Promise<void> {
-  const startTime = Date.now()
-  
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const response = await fetch(url)
-      if (response.ok) {
-        return
-      }
-    } catch (error) {
-    }
-    
-    await setTimeout(1000)
-  }
-  
-  throw new Error(`Server at ${url} did not become ready within ${timeoutMs}ms`)
-}
-
-async function stopProcess(process: ChildProcess): Promise<void> {
-  if (!process.pid) return
-
-  try {
-    globalThis.process.kill(-process.pid, 'SIGTERM')
-  } catch {
-    return
-  }
-  await setTimeout(500)
-  try {
-    globalThis.process.kill(-process.pid, 'SIGKILL')
-  } catch {
-    // Process group already exited.
-  }
-}
-
-async function run(command: string, args: string[], cwd: string): Promise<string> {
-  const child = spawn(command, args, { cwd, stdio: 'pipe' })
-  let output = ''
-  child.stdout?.on('data', data => { output += data.toString() })
-  child.stderr?.on('data', data => { output += data.toString() })
-
-  return new Promise((resolve, reject) => {
-    child.on('close', code => code === 0
-      ? resolve(output)
-      : reject(new Error(`${command} ${args.join(' ')} failed with code ${code}\n${output}`)))
-    child.on('error', reject)
-  })
-}
+import { run, startServer, stopProcess, waitForServer } from './e2eHelpers'
 
 function readJavaScriptFiles(root: string): string {
   if (!existsSync(root)) return ''
@@ -122,11 +74,7 @@ describe('E2E Next.js Turbopack - source context package entries', () => {
     expect(browserOutput).not.toContain('resolveElementSourceContext')
     expect(browserOutput).not.toContain('node:fs')
 
-    productionServer = spawn('npm', ['run', 'start'], {
-      cwd: nextjsFixturePath,
-      stdio: 'pipe',
-      detached: true,
-    })
+    productionServer = startServer('npm', ['run', 'start'], nextjsFixturePath)
 
     await waitForServer(SERVER_URL, 60000)
   }, 240000)

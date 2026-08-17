@@ -22,7 +22,7 @@ describe('getElementSourceContext', () => {
       name: 'div',
       _debugOwner: {
         name: 'Avatar',
-        debugLocation: serverStack('avatar.js', 10, 7),
+        debugLocation: serverStack('%5Bavatar%5D.js', 10, 7),
         debugStack: serverStack('hero-post.js', 42, 11),
         owner: {
           name: 'HeroPost',
@@ -38,7 +38,7 @@ describe('getElementSourceContext', () => {
         definition: {
           componentName: 'Avatar',
           tagName: 'DIV',
-          file: 'about://React/Server/file:///app/.next/server/avatar.js',
+          file: 'about://React/Server/file:///app/.next/server/%5Bavatar%5D.js',
           line: 10,
           column: 7,
         },
@@ -60,6 +60,13 @@ describe('getElementSourceContext', () => {
         ],
       },
     })
+
+    const boundedResult = await getElementSourceContext(element, { maxDepth: 1 })
+    expect(boundedResult).toMatchObject({ success: true })
+    if (boundedResult.success) {
+      expect(boundedResult.data.invocations).toHaveLength(1)
+      expect(boundedResult.data.invocations[0].componentName).toBe('HeroPost')
+    }
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
@@ -135,36 +142,17 @@ describe('getElementSourceContext', () => {
     })
   })
 
-  it('preserves encoded generated paths while removing React query counters', async () => {
-    const element = document.createElement('div')
-    attachFiber(element, {
-      name: 'div',
-      _debugStack: serverStack('%5Broot%5D.js', 100, 3),
-      _debugOwner: { name: 'Avatar' },
-    })
-
-    await expect(getElementSourceContext(element, { maxDepth: 10 })).resolves.toMatchObject({
-      success: true,
-      data: {
-        definition: {
-          file: 'about://React/Server/file:///app/.next/server/%5Broot%5D.js',
-          line: 100,
-          column: 3,
-        },
-      },
-    })
-  })
-
-  it('returns an ordinary browser source as the definition', async () => {
+  it('returns an ordinary ForwardRef browser source as the definition', async () => {
     const element = document.createElement('button')
     attachFiber(element, {
-      name: 'button',
+      name: '',
+      tag: 11,
+      type: { render: { name: 'Button' } },
       _debugSource: {
         fileName: 'http://localhost:3000/src/Button.tsx',
         lineNumber: 8,
         columnNumber: 4,
       },
-      _debugOwner: { name: 'Button' },
     })
 
     await expect(getElementSourceContext(element, { maxDepth: 10 })).resolves.toMatchObject({
@@ -242,30 +230,6 @@ describe('getElementSourceContext', () => {
     })
   })
 
-  it('retains a ForwardRef name discovered by the browser stack parser', async () => {
-    const element = document.createElement('button')
-    attachFiber(element, {
-      name: '',
-      tag: 11,
-      type: { render: { name: 'Button' } },
-      _debugSource: {
-        fileName: 'src/Button.tsx',
-        lineNumber: 8,
-        columnNumber: 4,
-      },
-    } as ReactFiberNode)
-
-    await expect(getElementSourceContext(element)).resolves.toMatchObject({
-      success: true,
-      data: {
-        definition: {
-          componentName: 'Button',
-          file: 'src/Button.tsx',
-        },
-      },
-    })
-  })
-
   it('keeps owner invocations while searching return fibers for a definition', async () => {
     const element = document.createElement('article')
     attachFiber(element, {
@@ -319,28 +283,4 @@ describe('getElementSourceContext', () => {
     })
   })
 
-  it('bounds owner invocation traversal by maxDepth', async () => {
-    const element = document.createElement('div')
-    attachFiber(element, {
-      name: 'div',
-      _debugStack: serverStack('avatar.js', 10, 7),
-      _debugOwner: {
-        name: 'Avatar',
-        debugStack: serverStack('hero-post.js', 42, 11),
-        owner: {
-          name: 'HeroPost',
-          debugStack: serverStack('page.js', 18, 5),
-          owner: { name: 'Index' },
-        },
-      },
-    })
-
-    const result = await getElementSourceContext(element, { maxDepth: 1 })
-
-    expect(result).toMatchObject({ success: true })
-    if (result.success) {
-      expect(result.data.invocations).toHaveLength(1)
-      expect(result.data.invocations[0].componentName).toBe('HeroPost')
-    }
-  })
 })
