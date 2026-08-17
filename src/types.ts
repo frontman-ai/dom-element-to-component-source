@@ -76,8 +76,8 @@ export interface ReactFiberNode {
 
 /**
  * DOM element extended with React internal properties
- * Note: React may also add dynamic properties like __reactFiber$* or _reactFiber$* 
- * with random postfixes that are handled at runtime
+ * Note: React may also add dynamic properties like __reactFiber$*, _reactFiber$*,
+ * or __reactInternalInstance$* with random postfixes that are handled at runtime
  */
 export interface DomElementWithReactInternals extends Element {
   /** React 16+ internal fiber reference */

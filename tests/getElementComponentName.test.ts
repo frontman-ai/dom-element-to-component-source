@@ -27,11 +27,39 @@ describe('getElementComponentName', () => {
     expect(getElementComponentName(element)).toBe('OwnerComponent')
   })
 
-  it('detects dynamic React Fiber keys', () => {
+  it('uses debug owners before alternate owners', () => {
     const element = document.createElement('div')
-    attachFiber(element, fiber('div', { _debugOwner: fiber('DynamicOwner') }), '_reactFiber$abc123')
+    attachFiber(element, fiber('div', {
+      _debugOwner: fiber('DebugOwner'),
+      owner: fiber('AlternateOwner'),
+    }))
+
+    expect(getElementComponentName(element)).toBe('DebugOwner')
+  })
+
+  it.each([
+    '__reactFiber$abc123',
+    '_reactFiber$abc123',
+    '__reactInternalInstance$abc123',
+  ])('detects the dynamic React Fiber key %s', key => {
+    const element = document.createElement('div')
+    attachFiber(element, fiber('div', { _debugOwner: fiber('DynamicOwner') }), key)
 
     expect(getElementComponentName(element)).toBe('DynamicOwner')
+  })
+
+  it('prefers the Fiber name before names on its type', () => {
+    const element = document.createElement('div')
+    attachFiber(element, fiber('div', {
+      owner: fiber('FiberName', {
+        type: {
+          displayName: 'DisplayName',
+          name: 'TypeName',
+        },
+      }),
+    }))
+
+    expect(getElementComponentName(element)).toBe('FiberName')
   })
 
   it('bounds traversal and defaults maxDepth to 10', () => {
@@ -57,25 +85,14 @@ describe('getElementComponentName', () => {
     })).toBeUndefined()
   })
 
-  it('ignores Fragment and Suspense while retaining later owners', () => {
+  it('merges caller exclusions with Fragment and Suspense exclusions', () => {
     const element = document.createElement('div')
     attachFiber(element, fiber('div', {
       owner: fiber('Fragment', {
         owner: fiber('Suspense', {
-          owner: fiber('Page'),
-        }),
-      }),
-    }))
-
-    expect(getElementComponentName(element)).toBe('Page')
-  })
-
-  it('merges caller exclusions with structural exclusions', () => {
-    const element = document.createElement('div')
-    attachFiber(element, fiber('div', {
-      owner: fiber('Fragment', {
-        owner: fiber('FrameworkWrapper', {
-          owner: fiber('Card'),
+          owner: fiber('FrameworkWrapper', {
+            owner: fiber('Card'),
+          }),
         }),
       }),
     }))

@@ -35,7 +35,7 @@ function getDebugSource(fiber: ReactFiberNode | undefined): DebugSource | undefi
 }
 
 function getOwner(fiber: ReactFiberNode | undefined): ReactFiberNode | undefined {
-  return fiber?.owner || fiber?._debugOwner
+  return fiber?._debugOwner || fiber?.owner
 }
 
 function parseReactServerLocation(
@@ -153,7 +153,11 @@ function extractFiberNode(element: Element): ReactFiberNode | null {
   }
 
   for (const key of Object.keys(elementWithReact)) {
-    if (key.startsWith('__reactFiber$') || key.startsWith('_reactFiber$')) {
+    if (
+      key.startsWith('__reactFiber$') ||
+      key.startsWith('_reactFiber$') ||
+      key.startsWith('__reactInternalInstance$')
+    ) {
       const fiber = (elementWithReact as unknown as Record<string, unknown>)[key]
       if (fiber && typeof fiber === 'object') {
         return fiber as ReactFiberNode
@@ -231,7 +235,7 @@ export async function getElementSourceContext(
     let fallbackInvocations: SourceLocation[] = []
 
     for (const current of walkFiberChain(fiber, node => node.return, maxDepth)) {
-      const owner = current._debugOwner || current.owner
+      const owner = getOwner(current)
       const componentName = (owner && getFiberComponentName(owner)) ||
         getFiberComponentName(current)
       const currentDebugSource = getDebugSource(current)

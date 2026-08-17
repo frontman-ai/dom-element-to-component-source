@@ -123,6 +123,8 @@ export function extractComponentProps(
  * Gets the component name exposed by a Fiber, including ForwardRef render names.
  */
 export function getFiberComponentName(fiberNode: ReactFiberNode): string | undefined {
+  if (fiberNode.name) return fiberNode.name
+
   const nodeType = fiberNode.type
   if (nodeType) {
     if (nodeType.displayName) return nodeType.displayName
@@ -130,8 +132,6 @@ export function getFiberComponentName(fiberNode: ReactFiberNode): string | undef
     if (nodeType.name) return nodeType.name
   }
 
-  if (fiberNode.name) return fiberNode.name
-  
   return undefined
 }
 
