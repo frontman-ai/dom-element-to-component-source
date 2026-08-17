@@ -19,7 +19,10 @@ function expectErrorCode(
   result: Awaited<ReturnType<typeof resolveElementSourceContext>>,
   code: SourceResolutionErrorCode,
 ): void {
-  expect(result).toMatchObject({ success: false, error: { code } })
+  expect(result).toMatchObject({
+    success: false,
+    error: { code, message: expect.any(String) },
+  })
 }
 
 describe('resolveElementSourceContext', () => {
@@ -140,32 +143,17 @@ describe('resolveElementSourceContext', () => {
       { file: 'about://React/Server/https://example.com/chunk.js', line: 1, column: 0 },
       'INVALID_REACT_URL',
     ],
-    [
-      'GENERATED_FILE_NOT_FOUND for missing files',
-      serverLocation('missing.js'),
-      'GENERATED_FILE_NOT_FOUND',
-    ],
+    ['malformed React URLs', { file: 'about://React/Server/not a URL', line: 1, column: 0 }, 'INVALID_REACT_URL'],
+    ['missing generated files', serverLocation('missing.js'), 'GENERATED_FILE_NOT_FOUND'],
     [
       'GENERATED_FILE_NOT_FOUND for out-of-root files',
       { file: `about://React/Server/${pathToFileURL(__filename).href}`, line: 1, column: 0 },
       'GENERATED_FILE_NOT_FOUND',
     ],
-    [
-      'SOURCE_MAP_NOT_FOUND for missing maps',
-      serverLocation('no-map.js'),
-      'SOURCE_MAP_NOT_FOUND',
-    ],
-    [
-      'POSITION_NOT_FOUND for unmapped positions',
-      serverLocation('no-position.js'),
-      'POSITION_NOT_FOUND',
-    ],
-    [
-      'RESOLUTION_FAILED for malformed maps',
-      serverLocation('malformed.js'),
-      'RESOLUTION_FAILED',
-    ],
-  ] as const)('returns %s', async (_case, location, code) => {
+    ['missing source maps', serverLocation('no-map.js'), 'SOURCE_MAP_NOT_FOUND'],
+    ['unmapped positions', serverLocation('no-position.js'), 'POSITION_NOT_FOUND'],
+    ['malformed maps', serverLocation('malformed.js'), 'RESOLUTION_FAILED'],
+  ] as const)('returns the documented error for %s', async (_case, location, code) => {
     const result = await resolveElementSourceContext({
       invocations: [location],
     }, { projectRoot })
