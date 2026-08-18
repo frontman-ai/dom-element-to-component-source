@@ -21,16 +21,18 @@ describe('getElementSourceContext', () => {
     attachFiber(element, {
       name: 'div',
       _debugSource: { fileName: 'browser.js', lineNumber: 1, columnNumber: 0 },
+      _debugStack: serverStack('%5Bavatar%5D.js', 10, 7),
+      memoizedProps: { children: 'JJ Kasper', className: 'avatar-name' },
       _debugOwner: {
         name: 'Avatar',
         debugLocation: serverStack('%5Bavatar%5D.js', 10, 7),
         debugStack: serverStack('hero.js', 42, 11),
-        memoizedProps: { label: 'Save', onClick: () => undefined },
+        memoizedProps: { name: 'JJ Kasper', picture: '/avatar.jpg', onClick: () => undefined },
         owner: {
           name: 'Hero',
           debugStack: serverStack('page.js', 18, 5),
           pendingProps: { featured: true },
-          owner: { name: 'Index' },
+          owner: { name: 'Index', memoizedProps: { locale: 'en' } },
         },
       },
     })
@@ -43,7 +45,7 @@ describe('getElementSourceContext', () => {
           line: 10,
           column: 7,
           componentName: 'Avatar',
-          componentProps: { label: 'Save' },
+          componentProps: { name: 'JJ Kasper', picture: '/avatar.jpg' },
           tagName: 'DIV',
         },
         invocations: [
@@ -52,7 +54,7 @@ describe('getElementSourceContext', () => {
             line: 42,
             column: 11,
             componentName: 'Hero',
-            componentProps: { label: 'Save' },
+            componentProps: { featured: true },
             tagName: 'DIV',
           },
           {
@@ -60,7 +62,7 @@ describe('getElementSourceContext', () => {
             line: 18,
             column: 5,
             componentName: 'Index',
-            componentProps: { featured: true },
+            componentProps: { locale: 'en' },
             tagName: 'DIV',
           },
         ],
