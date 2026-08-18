@@ -114,8 +114,8 @@ export function filterPrimitiveProps(
 export function extractComponentProps(
   fiberNode: ReactFiberNode
 ): SerializableProps | undefined {
-  // React stores props in memoizedProps or pendingProps
-  const props = fiberNode.memoizedProps || fiberNode.pendingProps
+  // RSC owner records use props instead of Fiber memoizedProps.
+  const props = fiberNode.memoizedProps || fiberNode.pendingProps || fiberNode.props
   return filterPrimitiveProps(props)
 }
 

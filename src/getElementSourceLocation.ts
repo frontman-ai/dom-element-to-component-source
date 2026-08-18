@@ -40,8 +40,7 @@ function getOwner(fiber: ReactFiberNode | undefined): ReactFiberNode | undefined
 
 function parseReactServerLocation(
   debugSource: DebugSource | undefined,
-  fiber: ReactFiberNode,
-  componentName: string | undefined,
+  componentFiber: ReactFiberNode,
   tagName: string,
 ): SourceLocation | null {
   if (!debugSource || !('stack' in debugSource) || typeof debugSource.stack !== 'string') {
@@ -69,8 +68,8 @@ function parseReactServerLocation(
     file: match[1],
     line: Number(match[2]),
     column: Number(match[3]),
-    componentName,
-    componentProps: extractComponentProps(fiber),
+    componentName: getFiberComponentName(componentFiber),
+    componentProps: extractComponentProps(componentFiber),
     tagName,
   }
 }
@@ -85,29 +84,30 @@ function hasReactVirtualLocation(debugSource: DebugSource | undefined): boolean 
 }
 
 async function parseBrowserLocation(
-  fiber: ReactFiberNode,
-  componentName: string | undefined,
+  sourceFiber: ReactFiberNode,
+  componentFiber: ReactFiberNode,
   tagName: string,
 ): Promise<SourceLocation | null> {
-  const sourceLocation = await parseDebugStack(fiber)
+  const sourceLocation = await parseDebugStack(sourceFiber)
   if (!sourceLocation || !validateSourceLocation(sourceLocation)) {
     return null
   }
 
   return {
     ...sourceLocation,
-    componentName: componentName || sourceLocation.componentName,
+    componentName: getFiberComponentName(componentFiber),
+    componentProps: extractComponentProps(componentFiber),
     tagName,
   }
 }
 
 async function parseLocation(
-  fiber: ReactFiberNode,
+  sourceFiber: ReactFiberNode,
   debugSource: DebugSource | undefined,
-  componentName: string | undefined,
+  componentFiber: ReactFiberNode,
   tagName: string,
 ): Promise<SourceLocation | null> {
-  const serverLocation = parseReactServerLocation(debugSource, fiber, componentName, tagName)
+  const serverLocation = parseReactServerLocation(debugSource, componentFiber, tagName)
   if (serverLocation) {
     return serverLocation
   }
@@ -116,7 +116,7 @@ async function parseLocation(
     return null
   }
 
-  return parseBrowserLocation(fiber, componentName, tagName)
+  return parseBrowserLocation(sourceFiber, componentFiber, tagName)
 }
 
 async function getInvocations(
@@ -127,11 +127,10 @@ async function getInvocations(
   const invocations: SourceLocation[] = []
 
   for (const current of walkFiberChain(firstOwner, getOwner, maxDepth)) {
-    const enclosingOwner = getOwner(current)
     const location = await parseLocation(
       current,
       getDebugSource(current),
-      (enclosingOwner && getFiberComponentName(enclosingOwner)) || getFiberComponentName(current),
+      getOwner(current) || current,
       tagName,
     )
     if (location) {
@@ -236,24 +235,21 @@ export async function getElementSourceContext(
 
     for (const current of walkFiberChain(fiber, node => node.return, maxDepth)) {
       const owner = getOwner(current)
-      const componentName = (owner && getFiberComponentName(owner)) ||
-        getFiberComponentName(current)
+      const componentFiber = owner || current
       const currentDebugSource = getDebugSource(current)
 
       const currentServerDefinition = parseReactServerLocation(
         currentDebugSource,
-        current,
-        componentName,
+        componentFiber,
         element.tagName,
       )
       const ownerServerDefinition = parseReactServerLocation(
         owner?.debugLocation,
-        owner || current,
-        componentName,
+        componentFiber,
         element.tagName,
       )
       const definition = currentServerDefinition || ownerServerDefinition ||
-        await parseLocation(current, currentDebugSource, componentName, element.tagName)
+        await parseLocation(current, currentDebugSource, componentFiber, element.tagName)
 
       if (definition) {
         const invocations = await getInvocations(owner, element.tagName, maxDepth)

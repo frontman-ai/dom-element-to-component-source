@@ -72,6 +72,8 @@ export interface ReactFiberNode {
   memoizedProps?: Record<string, unknown>
   /** Pending props (React internal) */
   pendingProps?: Record<string, unknown>
+  /** Props exposed by React Server Component owner records */
+  props?: Record<string, unknown>
 }
 
 /**
