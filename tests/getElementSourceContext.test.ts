@@ -27,12 +27,12 @@ describe('getElementSourceContext', () => {
         name: 'Avatar',
         debugLocation: serverStack('%5Bavatar%5D.js', 10, 7),
         debugStack: serverStack('hero.js', 42, 11),
-        memoizedProps: { name: 'JJ Kasper', picture: '/avatar.jpg', onClick: () => undefined },
+        props: { name: 'JJ Kasper', picture: '/avatar.jpg', onClick: () => undefined },
         owner: {
           name: 'Hero',
           debugStack: serverStack('page.js', 18, 5),
-          pendingProps: { featured: true },
-          owner: { name: 'Index', memoizedProps: { locale: 'en' } },
+          props: { featured: true },
+          owner: { name: 'Index', props: { locale: 'en' } },
         },
       },
     })
